@@ -1410,7 +1410,6 @@ class MainActivity : ComponentActivity() {
                         onRelease = { webView ->
                             if (!isActivityDestroyed) {
                                 try {
-                                    webView.clearFocus()
                                     webView.onPause()
                                     (webView.parent as? android.view.ViewGroup)?.removeView(webView)
                                 } catch (e: Exception) {
