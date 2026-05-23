@@ -4,6 +4,11 @@ import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.content.ContentValues
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -13,6 +18,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +42,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -242,6 +249,21 @@ class MainActivity : ComponentActivity() {
         val context = LocalContext.current
         val clipboardManager = LocalClipboardManager.current
 
+        // Animated Splash Screen States
+        var showSplash by remember { mutableStateOf(true) }
+        var splashAlpha by remember { mutableStateOf(1f) }
+
+        LaunchedEffect(Unit) {
+            // Animate splash screen (600-800ms) and fade out
+            kotlinx.coroutines.delay(550)
+            val steps = 10
+            for (i in 1..steps) {
+                kotlinx.coroutines.delay(15)
+                splashAlpha = (steps - i) / steps.toFloat()
+            }
+            showSplash = false
+        }
+
         // Handle Backpress based on current active state
         when (currentScreen) {
             is Screen.WebViewScreen -> {
@@ -280,6 +302,11 @@ class MainActivity : ComponentActivity() {
                     Screen.Library -> LibraryScreen()
                 }
 
+                // Overlay animated splash screen if active
+                if (showSplash) {
+                    SplashScreen(alpha = splashAlpha)
+                }
+
                 // Dialog: Save Capsule Prompt
                 if (viewModel.showSaveDialog.value) {
                     var currentInput by viewModel.capsuleNameInput
@@ -289,7 +316,8 @@ class MainActivity : ComponentActivity() {
                             Text(
                                 "Save Capsule Context",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF18181B)
                             )
                         },
                         text = {
@@ -297,7 +325,7 @@ class MainActivity : ComponentActivity() {
                                 Text(
                                     "Enter a descriptive name for this extracted chat conversation context.",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = Color(0xFF71717A)
                                 )
                                 OutlinedTextField(
                                     value = currentInput,
@@ -308,8 +336,8 @@ class MainActivity : ComponentActivity() {
                                         .fillMaxWidth()
                                         .testTag("capsule_title_input"),
                                     colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                        focusedBorderColor = Color(0xFF6E56CF),
+                                        unfocusedBorderColor = Color(0xFFE4E4E7)
                                     )
                                 )
                             }
@@ -324,14 +352,15 @@ class MainActivity : ComponentActivity() {
                                         Toast.makeText(context, "Name cannot be empty!", Toast.LENGTH_SHORT).show()
                                     }
                                 },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6E56CF)),
                                 modifier = Modifier.testTag("save_dialog_confirm_button")
                             ) {
-                                Text("Save")
+                                Text("Save", color = Color.White)
                             }
                         },
                         dismissButton = {
                             TextButton(onClick = { viewModel.showSaveDialog.value = false }) {
-                                Text("Cancel")
+                                Text("Cancel", color = Color(0xFF71717A))
                             }
                         }
                     )
@@ -351,6 +380,7 @@ class MainActivity : ComponentActivity() {
                                     capsule.name,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF18181B),
                                     modifier = Modifier.weight(1f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -359,7 +389,7 @@ class MainActivity : ComponentActivity() {
                                 // Quick category indicator
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = getAiColor(capsule.aiName).copy(alpha = 0.2f)
+                                    color = getAiColor(capsule.aiName).copy(alpha = 0.12f)
                                 ) {
                                     Text(
                                         text = capsule.aiName,
@@ -380,16 +410,16 @@ class MainActivity : ComponentActivity() {
                                 Text(
                                     text = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault()).format(Date(capsule.timestamp)),
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = Color(0xFF71717A)
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Surface(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .weight(1f),
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    color = Color(0xFFF4F4F5),
                                     shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
+                                    border = BorderStroke(1.dp, Color(0xFFE4E4E7))
                                 ) {
                                     Box(
                                         modifier = Modifier
@@ -401,7 +431,7 @@ class MainActivity : ComponentActivity() {
                                             text = capsule.content,
                                             style = MaterialTheme.typography.bodySmall,
                                             fontFamily = FontFamily.Monospace,
-                                            color = MaterialTheme.colorScheme.onSurface
+                                            color = Color(0xFF18181B)
                                         )
                                     }
                                 }
@@ -429,17 +459,32 @@ class MainActivity : ComponentActivity() {
                                 
                                 Spacer(modifier = Modifier.weight(1f))
 
+                                // Download Option
+                                OutlinedButton(
+                                    onClick = {
+                                        saveCapsuleToDownloads(context, capsule.name, capsule.content)
+                                    },
+                                    modifier = Modifier.testTag("detail_dialog_download_button"),
+                                    border = BorderStroke(1.dp, Color(0xFFE4E4E7)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF71717A))
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = "Download", modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Download")
+                                }
+
                                 // Copy Option
                                 Button(
                                     onClick = {
                                         clipboardManager.setText(AnnotatedString(capsule.content))
                                         Toast.makeText(context, "Full conversation copied to clipboard", Toast.LENGTH_SHORT).show()
                                     },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6E56CF)),
                                     modifier = Modifier.testTag("detail_dialog_copy_button")
                                 ) {
                                     Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Copy")
+                                    Text("Copy", color = Color.White)
                                 }
                             }
                         }
@@ -450,175 +495,741 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun HomeScreen() {
-        Column(
+    fun SplashScreen(alpha: Float) {
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .background(Color.White)
+                .graphicsLayer(alpha = alpha),
+            contentAlignment = Alignment.Center
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // App Title Logo & Header
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(Color(0xFF60A5FA), Color(0xFFC084FC))
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.FolderZip,
-                        contentDescription = "CapsuleX Logo",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
+                ContextDropLogo(modifier = Modifier.size(96.dp))
+                Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = "CapsuleX",
-                    style = MaterialTheme.typography.headlineLarge,
+                    text = "ContextDrop",
+                    style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
-                    color = Color.White
+                    color = Color(0xFF09090B),
+                    letterSpacing = (-0.5).sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Save once. Use anywhere.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF71717A),
+                    fontWeight = FontWeight.Medium
                 )
             }
-            
-            Text(
-                text = "AI Conversation Context Archiver",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                modifier = Modifier.padding(top = 4.dp, bottom = 28.dp)
-            )
-
-            // Direct button to stored database state
-            Button(
-                onClick = { viewModel.navigateTo(Screen.Library) },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("view_library_home_button")
-            ) {
-                Icon(Icons.Filled.FolderOpen, contentDescription = "Folder", tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Open Stored context Library", color = MaterialTheme.colorScheme.onSurface)
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Text(
-                text = "Select active AI Web sandbox",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .align(Alignment.Start)
-                    .padding(bottom = 12.dp)
-            )
-
-            // Claude Card
-            AiPortalCard(
-                name = "Claude",
-                url = "https://claude.ai",
-                description = "Anthropic's helpful assistant. Great for highly conceptual context extraction.",
-                accentColor = Color(0xFFD97753),
-                logo = { ClaudeLogo() }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // ChatGPT Card
-            AiPortalCard(
-                name = "ChatGPT",
-                url = "https://chatgpt.com",
-                description = "OpenAI's smart companion. Instantly extract threads using structured author roles.",
-                accentColor = Color(0xFF10A37F),
-                logo = { ChatGptLogo() }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Gemini Card
-            AiPortalCard(
-                name = "Gemini",
-                url = "https://gemini.google.com",
-                description = "Google's powerful model. Ideal for rich canvas and message blocks archivers.",
-                accentColor = Color(0xFF60A5FA),
-                logo = { GeminiLogo() }
-            )
-            
-            Spacer(modifier = Modifier.height(40.dp))
         }
     }
 
     @Composable
-    fun AiPortalCard(
-        name: String,
-        url: String,
-        description: String,
-        accentColor: Color,
-        logo: @Composable () -> Unit
-    ) {
-        Card(
+    fun HomeScreen() {
+        val list by viewModel.capsules.collectAsState()
+        val context = LocalContext.current
+        var searchQuery by remember { mutableStateOf("") }
+        var showNewCapsulePromptChoice by remember { mutableStateOf(false) }
+
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.navigateTo(Screen.WebViewScreen(name, url)) }
-                .testTag("ai_card_${name.lowercase()}"),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                .fillMaxSize()
+                .background(Color.White)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // App Title Logo & Header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ContextDropLogo(modifier = Modifier.size(44.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "ContextDrop",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF09090B),
+                            letterSpacing = (-0.5).sp
+                        )
+                        Text(
+                            text = "Save once. Use anywhere.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF71717A)
+                        )
+                    }
+                }
+                
+                IconButton(
+                    onClick = {
+                        Toast.makeText(context, "No new notifications", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.testTag("home_notification_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Notifications",
+                        tint = Color(0xFF71717A),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Search Filter Row
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search capsules...", color = Color(0xFF94A3B8)) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = Color(0xFF94A3B8)
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color(0xFF71717A))
+                        }
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("home_search_bar"),
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color(0xFFFFFFFF),
+                    unfocusedContainerColor = Color(0xFFF9FAFB),
+                    focusedBorderColor = Color(0xFF6E56CF),
+                    unfocusedBorderColor = Color(0xFFE4E4E7)
+                )
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+            
+            // Header for Recent Capsule
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Recent Capsule",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF71717A)
+                )
+                if (list.size > 1) {
+                    Text(
+                        text = "View all ${list.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFF6E56CF),
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable { viewModel.navigateTo(Screen.Library) }
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Filter capsule list dynamically
+            val finalFilteredList = remember(list, searchQuery) {
+                if (searchQuery.trim().isEmpty()) {
+                    list
+                } else {
+                    list.filter {
+                        it.name.contains(searchQuery, ignoreCase = true) ||
+                        it.aiName.contains(searchQuery, ignoreCase = true) ||
+                        it.content.contains(searchQuery, ignoreCase = true)
+                    }
+                }
+            }
+
+            if (finalFilteredList.isEmpty()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("recent_capsule_empty_card"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE4E4E7))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Inbox,
+                            contentDescription = "Empty",
+                            tint = Color(0xFFD1D5DB),
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (searchQuery.isNotEmpty()) "No matches found" else "No saved capsules yet",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF71717A)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (searchQuery.isNotEmpty()) "Try a different search term" else "Save a capsule thread from any AI partner to see it here.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                }
+            } else {
+                // Show ONLY ONE Recent Capsule (index 0)
+                val recentCapsule = finalFilteredList[0]
+                val relativeTime = getRelativeTime(recentCapsule.timestamp)
+                
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.selectedCapsuleForDetail.value = recentCapsule }
+                        .testTag("recent_capsule_card"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE4E4E7))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color(0xFFF4F4F5), shape = RoundedCornerShape(10.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FolderOpen,
+                                contentDescription = "Capsule File",
+                                tint = getAiColor(recentCapsule.aiName),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.width(12.dp))
+                        
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = recentCapsule.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF18181B),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${recentCapsule.aiName} • $relativeTime",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF71717A)
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.width(8.dp))
+                        
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Open Capsule",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Statistics Row (Compact list)
+            val capsCount = list.size
+            val weekCount = list.count { it.timestamp >= (System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L) }
+            
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("statistics_card"),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, Color(0xFFE4E4E7))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Stat 1: Capsules
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FolderOpen,
+                                contentDescription = "Capsules Count",
+                                tint = Color(0xFF6E56CF),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = capsCount.toString(),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF18181B)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Capsules",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF71717A)
+                        )
+                    }
+                    
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(24.dp)
+                            .background(Color(0xFFE4E4E7))
+                    )
+                    
+                    // Stat 2: AI Platforms
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Layers,
+                                contentDescription = "Platforms Count",
+                                tint = Color(0xFF10A37F),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "3",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF18181B)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "AI Platforms",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF71717A)
+                        )
+                    }
+                    
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(24.dp)
+                            .background(Color(0xFFE4E4E7))
+                    )
+                    
+                    // Stat 3: This Week
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.TrendingUp,
+                                contentDescription = "Week Stats",
+                                tint = Color(0xFFEC4899),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = weekCount.toString(),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF18181B)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "This Week",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF71717A)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+            
+            // Quick Actions Container for AI platforms
+            Text(
+                text = "Quick Actions",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF71717A),
+                modifier = Modifier.align(Alignment.Start)
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Quick Action 1: Claude
+                QuickActionItem(
+                    name = "Claude",
+                    iconLogo = {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(Color(0xFFFDF6F0), shape = CircleShape)
+                                .border(1.dp, Color(0xFFE4E4E7), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "C",
+                                color = Color(0xFFCC5A37),
+                                fontWeight = FontWeight.Black,
+                                fontSize = 18.sp,
+                                fontFamily = FontFamily.Serif
+                            )
+                        }
+                    },
+                    onClick = {
+                        viewModel.navigateTo(Screen.WebViewScreen("Claude", "https://claude.ai"))
+                    }
+                )
+                
+                // Quick Action 2: ChatGPT
+                QuickActionItem(
+                    name = "ChatGPT",
+                    iconLogo = {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(Color(0xFFF0FDF4), shape = CircleShape)
+                                .border(1.dp, Color(0xFFE4E4E7), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Circular icon representing ChatGPT
+                            Box(
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .background(Color(0xFF10A37F), shape = CircleShape)
+                            )
+                        }
+                    },
+                    onClick = {
+                        viewModel.navigateTo(Screen.WebViewScreen("ChatGPT", "https://chatgpt.com"))
+                    }
+                )
+                
+                // Quick Action 3: Gemini
+                QuickActionItem(
+                    name = "Gemini",
+                    iconLogo = {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(Color(0xFFEEF2FF), shape = CircleShape)
+                                .border(1.dp, Color(0xFFE4E4E7), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Spark shape representing Gemini
+                            Canvas(modifier = Modifier.size(14.dp)) {
+                                val path = Path().apply {
+                                    val w = size.width
+                                    val h = size.height
+                                    moveTo(w / 2f, 0f)
+                                    quadraticTo(w / 2f, h / 2f, w, h / 2f)
+                                    quadraticTo(w / 2f, h / 2f, w / 2f, h)
+                                    quadraticTo(w / 2f, h / 2f, 0f, h / 2f)
+                                    quadraticTo(w / 2f, h / 2f, w / 2f, 0f)
+                                    close()
+                                }
+                                drawPath(path, color = Color(0xFF4F46E5))
+                            }
+                        }
+                    },
+                    onClick = {
+                        viewModel.navigateTo(Screen.WebViewScreen("Gemini", "https://gemini.google.com"))
+                    }
+                )
+                
+                // Quick Action 4: More
+                QuickActionItem(
+                    name = "More",
+                    iconLogo = {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(Color(0xFFFAFAFA), shape = CircleShape)
+                                .border(1.dp, Color(0xFFE4E4E7), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "More",
+                                tint = Color(0xFF71717A),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    onClick = {
+                        Toast.makeText(context, "More AI models coming soon!", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Primary Indigo Call to Action
+            Button(
+                onClick = { showNewCapsulePromptChoice = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6E56CF)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("home_new_capsule_button")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("New Capsule", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Trust Platform Banner
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("trust_card"),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF4F4F5)),
+                border = BorderStroke(1.dp, Color(0xFFE4E4E7))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(Color.White, shape = CircleShape)
+                            .border(1.dp, Color(0xFFE4E4E7), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = "Shield Check",
+                            tint = Color(0xFF6E56CF),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.width(12.dp))
+                    
+                    Column {
+                        Text(
+                            text = "Your capsules stay on your device.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF18181B)
+                        )
+                        Spacer(modifier = Modifier.height(1.dp))
+                        Text(
+                            text = "No cloud storage. No accounts. You're in control.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF71717A)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Footer Text Block
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                logo()
+                Canvas(modifier = Modifier.size(12.dp)) {
+                    val path = Path().apply {
+                        val w = size.width
+                        val h = size.height
+                        moveTo(w / 2f, 0f)
+                        quadraticTo(w / 2f, h / 2f, w, h / 2f)
+                        quadraticTo(w / 2f, h / 2f, w / 2f, h)
+                        quadraticTo(w / 2f, h / 2f, 0f, h / 2f)
+                        quadraticTo(w / 2f, h / 2f, w / 2f, 0f)
+                        close()
+                    }
+                    drawPath(path, color = Color(0xFF7C3AED))
+                }
                 
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 
-                Column(modifier = Modifier.weight(1.1f)) {
+                Text(
+                    text = "Built for people who use more than one AI and want an edge over average users.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF71717A),
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // Choice Dialog triggered by + New Capsule
+        if (showNewCapsulePromptChoice) {
+            AlertDialog(
+                onDismissRequest = { showNewCapsulePromptChoice = false },
+                title = {
                     Text(
-                        text = name,
+                        "Start New Prompt Session",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = Color(0xFF18181B)
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "Choose an AI companion to launch. Simply start your conversation, then click 'Save Capsule' at the bottom to archive.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF71717A)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        OutlinedButton(
+                            onClick = {
+                                showNewCapsulePromptChoice = false
+                                viewModel.navigateTo(Screen.WebViewScreen("Claude", "https://claude.ai"))
+                            },
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE4E4E7))
+                        ) {
+                            Text("Launch Claude Sandbox", color = Color(0xFFCC5A37), fontWeight = FontWeight.Bold)
+                        }
+                        
+                        OutlinedButton(
+                            onClick = {
+                                showNewCapsulePromptChoice = false
+                                viewModel.navigateTo(Screen.WebViewScreen("ChatGPT", "https://chatgpt.com"))
+                            },
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE4E4E7))
+                        ) {
+                            Text("Launch ChatGPT Sandbox", color = Color(0xFF10A37F), fontWeight = FontWeight.Bold)
+                        }
+                        
+                        OutlinedButton(
+                            onClick = {
+                                showNewCapsulePromptChoice = false
+                                viewModel.navigateTo(Screen.WebViewScreen("Gemini", "https://gemini.google.com"))
+                            },
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE4E4E7))
+                        ) {
+                            Text("Launch Gemini Sandbox", color = Color(0xFF4F46E5), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showNewCapsulePromptChoice = false }) {
+                        Text("Cancel", color = Color(0xFF71717A))
+                    }
                 }
+            )
+        }
+    }
 
-                Spacer(modifier = Modifier.width(8.dp))
+    @Composable
+    fun QuickActionItem(
+        name: String,
+        iconLogo: @Composable () -> Unit,
+        onClick: () -> Unit
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .clickable(onClick = onClick)
+                .padding(8.dp)
+                .testTag("quick_action_${name.lowercase()}")
+        ) {
+            iconLogo()
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF18181B)
+            )
+        }
+    }
 
-                IconButton(
-                    onClick = { viewModel.navigateTo(Screen.WebViewScreen(name, url)) },
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = accentColor.copy(alpha = 0.15f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.ArrowForwardIos,
-                        contentDescription = "Open $name",
-                        tint = accentColor,
-                        modifier = Modifier.size(16.dp)
-                    )
+    @Composable
+    fun ContextDropLogo(modifier: Modifier = Modifier) {
+        Box(
+            modifier = modifier
+                .background(Color(0xFF09090B), shape = CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize(0.55f)) {
+                val path = Path().apply {
+                    val w = size.width
+                    val h = size.height
+                    moveTo(w / 2f, 0f)
+                    quadraticTo(w / 2f, h / 2f, w, h / 2f)
+                    quadraticTo(w / 2f, h / 2f, w / 2f, h)
+                    quadraticTo(w / 2f, h / 2f, 0f, h / 2f)
+                    quadraticTo(w / 2f, h / 2f, w / 2f, 0f)
+                    close()
                 }
+                drawPath(path, color = Color(0xFF7C3AED))
             }
         }
     }
@@ -627,11 +1238,11 @@ class MainActivity : ComponentActivity() {
     fun WebViewContainer(aiName: String, url: String) {
         Column(modifier = Modifier.fillMaxSize()) {
             
-            // Web Header
+            // Premium Light Web Header (cohesive with Notion White Design)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.background, // Elegant Dark Background #1C1B1F
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), // Solid Slate Border #49454F
+                color = Color.White,
+                border = BorderStroke(1.dp, Color(0xFFE4E4E7)),
                 shadowElevation = 0.dp
             ) {
                 Row(
@@ -648,7 +1259,7 @@ class MainActivity : ComponentActivity() {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back to home",
-                            tint = MaterialTheme.colorScheme.onBackground
+                            tint = Color(0xFF18181B)
                         )
                     }
                     
@@ -661,7 +1272,7 @@ class MainActivity : ComponentActivity() {
                             text = aiName,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = Color(0xFF18181B)
                         )
                         Text(
                             text = when (aiName) {
@@ -671,7 +1282,7 @@ class MainActivity : ComponentActivity() {
                                 else -> ""
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color(0xFF71717A)
                         )
                     }
 
@@ -684,14 +1295,14 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF4ADE80)) // Active light green
+                                .background(Color(0xFF10A37F))
                         )
                         Text(
-                            text = "ACTIVE",
+                            text = "Sandbox",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            letterSpacing = 1.sp
+                            color = Color(0xFF71717A),
+                            letterSpacing = 0.5.sp
                         )
                     }
                 }
@@ -701,7 +1312,7 @@ class MainActivity : ComponentActivity() {
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .background(MaterialTheme.colorScheme.background)
+                    .background(Color.White)
             ) {
                 AndroidView(
                     factory = { getOrCreateWebView(aiName, url) },
@@ -711,14 +1322,14 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            // FIXED Bottom native bar (Material 3 style)
+            // Material 3 premium browser operations panel
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("webview_bottom_navigation_bar"),
-                color = MaterialTheme.colorScheme.surface, // Elegant Dark Surface #2B2930
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), // Top border divider #49454F
-                shadowElevation = 8.dp
+                color = Color.White,
+                border = BorderStroke(1.dp, Color(0xFFE4E4E7)),
+                shadowElevation = 4.dp
             ) {
                 Row(
                     modifier = Modifier
@@ -729,7 +1340,7 @@ class MainActivity : ComponentActivity() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     
-                    // Button 1: Save Capsule (Violet highlight accent #D0BCFF, dark text #381E72)
+                    // Button 1: Save Capsule
                     Button(
                         onClick = {
                             val activeWebView = getOrCreateWebView(aiName, url)
@@ -754,8 +1365,8 @@ class MainActivity : ComponentActivity() {
                             .testTag("save_capsule_button"),
                         shape = RoundedCornerShape(100.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary, // #D0BCFF
-                            contentColor = MaterialTheme.colorScheme.onPrimary  // #381E72
+                            containerColor = Color(0xFF6E56CF),
+                            contentColor = Color.White
                         ),
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
                     ) {
@@ -772,7 +1383,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // Button 2: Library (Outline border #49454F)
+                    // Button 2: Library
                     OutlinedButton(
                         onClick = { viewModel.navigateTo(Screen.Library) },
                         modifier = Modifier
@@ -780,9 +1391,9 @@ class MainActivity : ComponentActivity() {
                             .height(48.dp)
                             .testTag("library_navigation_button"),
                         shape = RoundedCornerShape(100.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        border = BorderStroke(1.dp, Color(0xFFE4E4E7)),
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            contentColor = Color(0xFF71717A)
                         )
                     ) {
                         Icon(
@@ -823,32 +1434,31 @@ class MainActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
+                .background(Color.White)
         ) {
-            // Main Top app bar back trigger
             TopAppBar(
-                title = { Text("Capsule Library", fontWeight = FontWeight.Bold, color = Color.White) },
+                title = { Text("Capsule Library", fontWeight = FontWeight.Bold, color = Color(0xFF18181B)) },
                 navigationIcon = {
                     IconButton(
                         onClick = { viewModel.navigateTo(Screen.Home) },
                         modifier = Modifier.testTag("library_back_button")
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Go back", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Go back", tint = Color(0xFF18181B))
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
             )
 
-            // Search Header View
+            // Search Filter Row
             OutlinedTextField(
                 value = searchInput,
                 onValueChange = { searchInput = it },
-                placeholder = { Text("Search stored capsules...") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search icon") },
+                placeholder = { Text("Search stored capsules...", color = Color(0xFF94A3B8)) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color(0xFF94A3B8)) },
                 trailingIcon = {
                     if (searchInput.isNotEmpty()) {
                         IconButton(onClick = { searchInput = "" }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                            Icon(Icons.Filled.Close, contentDescription = "Clear", tint = Color(0xFF71717A))
                         }
                     }
                 },
@@ -859,12 +1469,13 @@ class MainActivity : ComponentActivity() {
                     .testTag("library_search_field"),
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                    focusedContainerColor = Color(0xFFFFFFFF),
+                    unfocusedContainerColor = Color(0xFFF9FAFB),
+                    focusedBorderColor = Color(0xFF6E56CF),
+                    unfocusedBorderColor = Color(0xFFE4E4E7)
                 )
             )
 
-            // Dynamic lazy body of items
             if (filteredList.isEmpty()) {
                 Column(
                     modifier = Modifier
@@ -876,20 +1487,21 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Inbox,
-                        contentDescription = "Empty box",
+                        contentDescription = "Empty",
                         modifier = Modifier.size(56.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        tint = Color(0xFFD1D5DB)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = if (searchInput.isNotEmpty()) "No matches found" else "Your Capsule Library is empty",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = Color(0xFF71717A),
+                        fontWeight = FontWeight.Medium
                     )
                     Text(
                         text = if (searchInput.isNotEmpty()) "Try searching different words." else "Open a Web Sandbox screen to save real capsule threads.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        color = Color(0xFF94A3B8),
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
@@ -911,7 +1523,6 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun LibraryCapsuleCard(capsule: Capsule) {
-        val context = LocalContext.current
         val dateString = remember(capsule.timestamp) {
             SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault()).format(Date(capsule.timestamp))
         }
@@ -923,29 +1534,27 @@ class MainActivity : ComponentActivity() {
                 .clickable { viewModel.selectedCapsuleForDetail.value = capsule }
                 .testTag("capsule_card_${capsule.id}"),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFE4E4E7))
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Title
                     Text(
                         text = capsule.name,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = Color(0xFF18181B),
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    // Tag label
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = getAiColor(capsule.aiName).copy(alpha = 0.15f)
+                        color = getAiColor(capsule.aiName).copy(alpha = 0.12f)
                     ) {
                         Text(
                             text = capsule.aiName,
@@ -959,20 +1568,18 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Date stamp
                 Text(
                     text = dateString,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = Color(0xFF71717A)
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Text excerpt
                 Text(
                     text = capsule.content,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Color(0xFF52525B),
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                     fontFamily = FontFamily.Monospace
@@ -984,91 +1591,58 @@ class MainActivity : ComponentActivity() {
     private fun getAiColor(ai: String): Color {
         return when (ai) {
             "ChatGPT" -> Color(0xFF10A37F)
-            "Claude" -> Color(0xFFD97753)
-            "Gemini" -> Color(0xFF60A5FA)
-            else -> Color(0xFF94A3B8)
+            "Claude" -> Color(0xFFCC5A37)
+            "Gemini" -> Color(0xFF4F46E5)
+            else -> Color(0xFF71717A)
         }
     }
 
-    // Modern native SVG drawings for ChatGPT, Claude, and Gemini
-    @Composable
-    fun ChatGptLogo(modifier: Modifier = Modifier) {
-        Box(
-            modifier = modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF10A37F)),
-            contentAlignment = Alignment.Center
-        ) {
-            // Stylized minimalist intersecting gears to draw structural ChatGPT geometry
-            Canvas(modifier = Modifier.size(24.dp)) {
-                val r = size.minDimension / 4.5f
-                val ctr = Offset(size.width / 2f, size.height / 2f)
-                for (i in 0 until 6) {
-                    val angle = (i * 60) * (Math.PI / 180.0)
-                    val loc = Offset(
-                        (ctr.x + r * Math.cos(angle)).toFloat(),
-                        (ctr.y + r * Math.sin(angle)).toFloat()
-                    )
-                    drawCircle(
-                        color = Color.White.copy(alpha = 0.8f),
-                        radius = r,
-                        center = loc,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
-                    )
+    private fun getRelativeTime(timestamp: Long): String {
+        val diff = System.currentTimeMillis() - timestamp
+        return when {
+            diff < 60000 -> "Just now"
+            diff < 3600000 -> "${diff / 60000}m ago"
+            diff < 86400000 -> "${diff / 3600000}h ago"
+            diff < 172800000 -> "Yesterday"
+            else -> SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(timestamp))
+        }
+    }
+
+    private fun saveCapsuleToDownloads(context: android.content.Context, filename: String, content: String) {
+        try {
+            val resolvedFilename = if (filename.endsWith(".txt")) filename else "$filename.txt"
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, resolvedFilename)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                 }
-            }
-        }
-    }
-
-    @Composable
-    fun ClaudeLogo(modifier: Modifier = Modifier) {
-        Box(
-            modifier = modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFCC5A37)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "C",
-                color = Color.White,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 24.sp,
-                fontFamily = FontFamily.Serif
-            )
-        }
-    }
-
-    @Composable
-    fun GeminiLogo(modifier: Modifier = Modifier) {
-        Box(
-            modifier = modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF9966FF),
-                            Color(0xFF3399FF)
-                        )
-                    )
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Canvas(modifier = Modifier.size(26.dp)) {
-                val path = Path().apply {
-                    val w = size.width
-                    val h = size.height
-                    moveTo(w / 2f, 0f)
-                    // Cubic Bezier curve creates Google Gemini four-pointed spark brilliantly
-                    cubicAsBezier(w / 2f, 0f, w / 2f, h / 2f, w, h / 2f)
-                    cubicAsBezier(w, h / 2f, w / 2f, h / 2f, w / 2f, h)
-                    cubicAsBezier(w / 2f, h, w / 2f, h / 2f, 0f, h / 2f)
-                    cubicAsBezier(0f, h / 2f, w / 2f, h / 2f, w / 2f, 0f)
+                
+                val uri: Uri? = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                if (uri != null) {
+                    resolver.openOutputStream(uri).use { outputStream ->
+                        outputStream?.write(content.toByteArray())
+                    }
+                    Toast.makeText(context, "Saved to Downloads", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Failed to create file", Toast.LENGTH_SHORT).show()
                 }
-                drawPath(path, color = Color.White)
+            } else {
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!downloadsDir.exists()) {
+                    downloadsDir.mkdirs()
+                }
+                val file = java.io.File(downloadsDir, resolvedFilename)
+                java.io.FileOutputStream(file).use { outputStream ->
+                    outputStream.write(content.toByteArray())
+                }
+                Toast.makeText(context, "Saved to Downloads", Toast.LENGTH_SHORT).show()
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1077,3 +1651,4 @@ class MainActivity : ComponentActivity() {
         cubicTo(x1, y1, ctrlX, ctrlY, x2, y2)
     }
 }
+

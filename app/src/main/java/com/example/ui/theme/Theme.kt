@@ -1,31 +1,29 @@
 package com.example.ui.theme
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = PrimaryElegant,
-    onPrimary = OnPrimaryElegant,
-    primaryContainer = PrimaryContainerElegant,
-    onPrimaryContainer = OnPrimaryContainerElegant,
-    background = ElegantBackground,
-    onBackground = Color(0xFFE6E1E5),
-    surface = ElegantSurface,
-    onSurface = Color(0xFFE6E1E5),
-    surfaceVariant = ElegantSurfaceVariant,
-    onSurfaceVariant = Color(0xFFCAC4D0),
-    outline = ElegantOutline
+private val LightColorScheme = lightColorScheme(
+    primary = PrimaryAccent,
+    onPrimary = OnPrimaryAccent,
+    background = NeutralLightBackground,
+    onBackground = OnBackgroundDark,
+    surface = NeutralLightSurface,
+    onSurface = OnSurfaceDark,
+    surfaceVariant = NeutralLightSurfaceVariant,
+    onSurfaceVariant = OnSurfaceVariantMuted,
+    outline = NeutralLightBorder
 )
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = true, // Force Dark UI
+    darkTheme: Boolean = false, // Force Light/White UI
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = DarkColorScheme,
+        colorScheme = LightColorScheme,
         typography = Typography,
         content = content
     )
