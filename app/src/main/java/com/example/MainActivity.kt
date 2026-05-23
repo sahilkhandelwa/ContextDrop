@@ -106,6 +106,28 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    override fun onPause() {
+        super.onPause()
+        webViews.values.forEach { webView ->
+            try {
+                webView.onPause()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        webViews.values.forEach { webView ->
+            try {
+                webView.onResume()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     // Helper to request or recycle a WebView for the particular AI
     fun getOrCreateWebView(aiName: String, initialUrl: String): WebView {
         return webViews.getOrPut(aiName) {
@@ -1336,6 +1358,7 @@ class MainActivity : ComponentActivity() {
                         factory = {
                             val webView = getOrCreateWebView(aiName, url)
                             (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                            webView.onResume()
                             webView
                         },
                         modifier = Modifier
@@ -1343,6 +1366,8 @@ class MainActivity : ComponentActivity() {
                             .testTag("webview_$aiName"),
                         onRelease = { webView ->
                             try {
+                                webView.clearFocus()
+                                webView.onPause()
                                 (webView.parent as? android.view.ViewGroup)?.removeView(webView)
                             } catch (e: Exception) {
                                 e.printStackTrace()
