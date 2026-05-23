@@ -89,6 +89,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        webViews.forEach { (_, webView) ->
+            try {
+                webView.clearHistory()
+                webView.clearCache(true)
+                webView.loadUrl("about:blank")
+                (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                webView.removeAllViews()
+                webView.destroy()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        webViews.clear()
+        super.onDestroy()
+    }
+
     // Helper to request or recycle a WebView for the particular AI
     fun getOrCreateWebView(aiName: String, initialUrl: String): WebView {
         return webViews.getOrPut(aiName) {
@@ -268,9 +285,9 @@ class MainActivity : ComponentActivity() {
         when (currentScreen) {
             is Screen.WebViewScreen -> {
                 val screenState = currentScreen as Screen.WebViewScreen
-                val activeWebView = getOrCreateWebView(screenState.aiName, screenState.url)
                 BackHandler {
-                    if (activeWebView.canGoBack()) {
+                    val activeWebView = webViews[screenState.aiName]
+                    if (activeWebView != null && activeWebView.canGoBack()) {
                         activeWebView.goBack()
                     } else {
                         viewModel.navigateTo(Screen.Home)
@@ -1314,12 +1331,25 @@ class MainActivity : ComponentActivity() {
                     .weight(1f)
                     .background(Color.White)
             ) {
-                AndroidView(
-                    factory = { getOrCreateWebView(aiName, url) },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("webview_$aiName")
-                )
+                key(aiName) {
+                    AndroidView(
+                        factory = {
+                            val webView = getOrCreateWebView(aiName, url)
+                            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                            webView
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("webview_$aiName"),
+                        onRelease = { webView ->
+                            try {
+                                (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    )
+                }
             }
 
             // Material 3 premium browser operations panel
