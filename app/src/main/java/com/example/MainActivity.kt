@@ -10,6 +10,8 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.WebViewClient
+import android.webkit.RenderProcessGoneDetail
+import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -68,6 +70,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var viewModel: CapsuleViewModel
     private val webViews = mutableMapOf<String, WebView>()
+    private var isActivityDestroyed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,14 +93,16 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        webViews.forEach { (_, webView) ->
+        isActivityDestroyed = true
+        webViews.values.toList().forEach { webView ->
             try {
                 webView.clearHistory()
                 webView.clearCache(true)
                 webView.loadUrl("about:blank")
                 (webView.parent as? android.view.ViewGroup)?.removeView(webView)
                 webView.removeAllViews()
-                webView.destroy()
+                // Do not explicitly call webView.destroy() to prevent native segfault crashes
+                // on the renderer process during Compose teardown when onRelease is triggered.
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -108,22 +113,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        webViews.values.forEach { webView ->
-            try {
-                webView.onPause()
-            } catch (e: Exception) {
-                e.printStackTrace()
+        if (!isActivityDestroyed) {
+            webViews.values.toList().forEach { webView ->
+                try {
+                    webView.onPause()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        webViews.values.forEach { webView ->
-            try {
-                webView.onResume()
-            } catch (e: Exception) {
-                e.printStackTrace()
+        if (!isActivityDestroyed) {
+            webViews.values.toList().forEach { webView ->
+                try {
+                    webView.onResume()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
@@ -155,6 +164,40 @@ class MainActivity : ComponentActivity() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
                         CookieManager.getInstance().flush()
+                    }
+
+                    override fun onRenderProcessGone(
+                        view: WebView?,
+                        detail: RenderProcessGoneDetail?
+                    ): Boolean {
+                        try {
+                            if (view != null) {
+                                val parent = view.parent as? ViewGroup
+                                parent?.removeView(view)
+                                view.destroy()
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                        
+                        try {
+                            val keyToRemove = webViews.filterValues { it === view }.keys.firstOrNull()
+                            if (keyToRemove != null) {
+                                webViews.remove(keyToRemove)
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+
+                        runOnUiThread {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "AI Sandbox render process crashed. Safely recovered!",
+                                Toast.LENGTH_SHORT
+                             ).show()
+                             viewModel.navigateTo(Screen.Home)
+                        }
+                        return true
                     }
                 }
                 webChromeClient = WebChromeClient()
@@ -1365,12 +1408,14 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .testTag("webview_$aiName"),
                         onRelease = { webView ->
-                            try {
-                                webView.clearFocus()
-                                webView.onPause()
-                                (webView.parent as? android.view.ViewGroup)?.removeView(webView)
-                            } catch (e: Exception) {
-                                e.printStackTrace()
+                            if (!isActivityDestroyed) {
+                                try {
+                                    webView.clearFocus()
+                                    webView.onPause()
+                                    (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
                             }
                         }
                     )
