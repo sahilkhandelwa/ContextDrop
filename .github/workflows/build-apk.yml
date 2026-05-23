@@ -22,8 +22,21 @@ jobs:
 
       - name: Verify Wrapper
         run: |
+          echo "=== Wrapper Directory ==="
           ls -lah gradle/wrapper/
+
+          echo ""
+          echo "=== File Type ==="
+          file gradle/wrapper/gradle-wrapper.jar || true
+
+          echo ""
+          echo "=== JAR Contents Test ==="
+          jar tf gradle/wrapper/gradle-wrapper.jar | head -20 || true
+
+          echo ""
+          echo "=== Gradlew Permissions ==="
           chmod +x gradlew
+          ls -lah gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
