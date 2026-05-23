@@ -1443,19 +1443,26 @@ class MainActivity : ComponentActivity() {
                     // Button 1: Save Capsule
                     Button(
                         onClick = {
-                            val activeWebView = getOrCreateWebView(aiName, url)
-                            val filterJs = getJsSelectorForAi(aiName)
-                            
-                            activeWebView.evaluateJavascript(filterJs) { result ->
-                                val cleanText = unescapeJsonString(result ?: "")
-                                if (cleanText.trim().isEmpty() || cleanText == "null") {
-                                    Toast.makeText(
-                                        this@MainActivity,
-                                        "No structural chat matches on screen yet. Start a prompt first!",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                } else {
-                                    viewModel.openSaveDialog(aiName, cleanText)
+                            val activeWebView = webViews[aiName]
+                            if (activeWebView == null) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "No active chat sandbox connection found.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                val filterJs = getJsSelectorForAi(aiName)
+                                activeWebView.evaluateJavascript(filterJs) { result ->
+                                    val cleanText = unescapeJsonString(result ?: "")
+                                    if (cleanText.trim().isEmpty() || cleanText == "null") {
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            "No structural chat matches on screen yet. Start a prompt first!",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    } else {
+                                        viewModel.openSaveDialog(aiName, cleanText)
+                                    }
                                 }
                             }
                         },
