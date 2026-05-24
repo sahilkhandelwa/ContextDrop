@@ -1266,7 +1266,8 @@ fun triggerExtractionForSave(
                 var rawItems = Array.from(document.querySelectorAll(
                     '[data-testid="user-message"], [data-testid="assistant-message"], [data-testid="claude-message"], ' +
                     '.user-message, .claude-message, .assistant-message, ' +
-                    'div[class*="font-user-message"], div[class*="font-claude-message"], ' +
+                    '[class*="font-user-message"], [class*="font-claude-message"], ' +
+                    '[data-is-streaming], div[data-is-streaming], ' +
                     'div[class*="message-bubble"], div[class*="MessageBubble"]'
                 ));
                 
@@ -1276,17 +1277,33 @@ fun triggerExtractionForSave(
                     });
                 });
                 
+                // Sort chronologically by DOM order
+                items.sort(function(a, b) {
+                    if (a === b) return 0;
+                    var position = a.compareDocumentPosition(b);
+                    if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
+                        return -1;
+                    } else if (position & Node.DOCUMENT_POSITION_PRECEDING) {
+                        return 1;
+                    }
+                    return 0;
+                });
+                
                 items.forEach(function(item) {
                     var isUser = false;
                     var testId = item.getAttribute('data-testid') || "";
                     var className = item.className || "";
-                    var htmlContent = item.innerHTML || "";
                     
                     if (testId.includes('user') || 
                         className.toLowerCase().includes('user') || 
-                        className.toLowerCase().includes('font-user-message') ||
-                        htmlContent.includes('user-message')) {
+                        className.toLowerCase().includes('font-user-message')) {
                         isUser = true;
+                    } else {
+                        var hasUserDescendant = !!item.querySelector('[data-testid="user-message"], [class*="font-user-message"], .user-message');
+                        var hasClaudeDescendant = !!item.querySelector('[data-testid="assistant-message"], [class*="font-claude-message"], [data-is-streaming]');
+                        if (hasUserDescendant && !hasClaudeDescendant) {
+                            isUser = true;
+                        }
                     }
                     
                     var speaker = isUser ? 'USER' : 'CLAUDE';
