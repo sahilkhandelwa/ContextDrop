@@ -1204,41 +1204,29 @@ fun triggerExtractionForSave(
             }
 
             if (href.includes("chatgpt.com")) {
-                var rawTurns = Array.from(document.querySelectorAll(
-                    'article, [data-testid^="conversation-turn-"], [class*="ConversationTurn"]'
-                ));
-                
-                var turns = [];
-                rawTurns.forEach(function(el) {
-                    var isDescendant = turns.some(function(parent) {
-                        return parent.contains(el);
-                    });
-                    if (isDescendant) return;
-                    turns = turns.filter(function(child) {
-                        return !el.contains(child);
-                    });
-                    turns.push(el);
-                });
-
-                turns.forEach(function(turn) {
+                var articles = Array.from(document.querySelectorAll('article'));
+                articles.forEach(function(art) {
                     var isUser = false;
-                    var roleEl = turn.querySelector('[data-message-author-role]');
+                    var roleEl = art.querySelector('[data-message-author-role]');
                     if (roleEl) {
                         var role = roleEl.getAttribute('data-message-author-role');
-                        if (role === 'user') isUser = true;
-                    } else if (turn.querySelector('[data-testid="user-message"]') || 
-                               turn.querySelector('.user-message') || 
-                               turn.querySelector('.whitespace-pre-wrap:not(.markdown)')) {
-                        isUser = true;
+                        if (role === 'user') {
+                            isUser = true;
+                        }
+                    } else {
+                        if (art.querySelector('[data-testid$="user-message"]') || 
+                            art.querySelector('[data-message-author-role="user"]') ||
+                            art.className.toLowerCase().includes('user') ||
+                            art.querySelector('.user-message')) {
+                            isUser = true;
+                        }
                     }
                     
                     var speaker = isUser ? 'USER' : 'CHATGPT';
-                    var contentEl = turn.querySelector('.markdown') || 
-                                    turn.querySelector('.whitespace-pre-wrap') || 
-                                    turn.querySelector('[data-message-author-role="user"]') ||
-                                    turn.querySelector('[data-message-author-role="assistant"]') ||
-                                    turn;
-                    
+                    var contentEl = art.querySelector('.markdown') || 
+                                    art.querySelector('.whitespace-pre-wrap') || 
+                                    art;
+                                    
                     var textVal = cleanElementAndGetText(contentEl);
                     if (textVal) {
                         var lowerVal = textVal.toLowerCase();
@@ -1250,21 +1238,14 @@ fun triggerExtractionForSave(
             } else if (href.includes("claude.ai")) {
                 var rawElements = Array.from(document.querySelectorAll(
                     '[data-testid="user-message"], [data-testid="assistant-message"], ' +
-                    '.user-message, .claude-message, .font-claude-message, .assistant-message, ' +
+                    '.user-message, .claude-message, .assistant-message, ' +
                     'div[class*="font-user-message"], div[class*="font-claude-message"]'
                 ));
                 
-                var elements = [];
-                rawElements.forEach(function(el) {
-                    if (el.querySelector('nav') || el.querySelector('sidebar') || el.closest('button')) return;
-                    var isDescendant = elements.some(function(parent) {
-                        return parent.contains(el);
+                var elements = rawElements.filter(function(el) {
+                    return !rawElements.some(function(other) {
+                        return other !== el && other.contains(el);
                     });
-                    if (isDescendant) return;
-                    elements = elements.filter(function(child) {
-                        return !el.contains(child);
-                    });
-                    elements.push(el);
                 });
 
                 elements.forEach(function(item) {
@@ -1286,30 +1267,25 @@ fun triggerExtractionForSave(
             } else if (href.includes("gemini.google.com")) {
                 var rawItems = Array.from(document.querySelectorAll(
                     'user-query, model-response, .user-query, .model-response, ' +
-                    '[class*="user-query"], [class*="model-response"], .query-content, .message-content, .model-response-text'
+                    '[class*="user-query"], [class*="model-response"]'
                 ));
                 
-                var items = [];
-                rawItems.forEach(function(el) {
-                    if (el.querySelector('nav') || el.querySelector('sidebar') || el.closest('button')) return;
-                    var isDescendant = items.some(function(parent) {
-                        return parent.contains(el);
+                var items = rawItems.filter(function(el) {
+                    return !rawItems.some(function(other) {
+                        return other !== el && other.contains(el);
                     });
-                    if (isDescendant) return;
-                    items = items.filter(function(child) {
-                        return !el.contains(child);
-                    });
-                    items.push(el);
                 });
 
                 items.forEach(function(item) {
                     var isUser = item.tagName.toLowerCase() === 'user-query' || 
                                  item.classList.contains('user-query') ||
-                                 item.className.toLowerCase().includes('user-query') ||
-                                 item.className.toLowerCase().includes('query-content');
+                                 item.className.toLowerCase().includes('user-query');
                     
                     var speaker = isUser ? 'USER' : 'GEMINI';
-                    var contentContainer = item.querySelector('.message-content') || item.querySelector('.query-content') || item;
+                    var contentContainer = item.querySelector('.message-content') || 
+                                           item.querySelector('.query-content') || 
+                                           item;
+                                           
                     var textVal = cleanElementAndGetText(contentContainer);
                     if (textVal) {
                         var lowerVal = textVal.toLowerCase();
@@ -1331,45 +1307,52 @@ fun triggerExtractionForSave(
             // Universal robust fallback if platform-specific scraper returned too few messages
             if (messagesToSave.length < 2) {
                 messagesToSave = [];
-                var candidates = Array.from(document.querySelectorAll(
-                    'div[class*="message"], div[class*="bubble"], div[class*="row"], ' +
-                    'div[class*="turn"], article, [data-testid*="message"], [data-testid*="turn"]'
+                var rawCandidates = Array.from(document.querySelectorAll(
+                    'article, [data-testid*="message"], [data-testid*="turn"], [class*="message"], [class*="bubble"], [class*="conversation-turn"]'
                 ));
                 
-                var chatElements = [];
-                candidates.forEach(function(el) {
+                var candidates = rawCandidates.filter(function(el) {
+                    if (el.querySelector('nav') || el.closest('nav') || el.querySelector('sidebar') || el.closest('sidebar') || el.closest('button')) {
+                        return false;
+                    }
                     var text = el.innerText ? el.innerText.trim() : "";
-                    if (text.length < 2 || text.length > 50000) return;
-                    if (el.querySelector('nav') || el.querySelector('sidebar') || el.closest('button')) return;
-                    if (el.tagName === 'BODY' || el.tagName === 'HTML') return;
+                    if (text.length < 2 || text.length > 50000) return false;
+                    if (el.tagName === 'BODY' || el.tagName === 'HTML') return false;
                     
-                    var isDescendant = chatElements.some(function(parent) {
-                        return parent.contains(el);
-                    });
-                    if (isDescendant) return;
-                    
-                    chatElements = chatElements.filter(function(child) {
-                        return !el.contains(child);
-                    });
-                    chatElements.push(el);
+                    var childCount = 0;
+                    for (var i = 0; i < rawCandidates.length; i++) {
+                        var other = rawCandidates[i];
+                        if (other !== el && el.contains(other)) {
+                            childCount++;
+                            if (childCount >= 2) {
+                                return false;
+                            }
+                        }
+                    }
+                    return true;
                 });
                 
-                chatElements.forEach(function(el) {
+                var nonNested = candidates.filter(function(el) {
+                    return !candidates.some(function(other) {
+                        return other !== el && other.contains(el);
+                    });
+                });
+                
+                nonNested.forEach(function(el) {
                     var html = el.innerHTML || "";
                     var textVal = cleanElementAndGetText(el);
                     if (!textVal) return;
                     
                     var isUser = false;
-                    if (el.getAttribute('data-testid') === 'user-message' || 
-                        el.classList.contains('user-query') || 
+                    var testId = el.getAttribute('data-testid') || "";
+                    var className = el.className || "";
+                    
+                    if (testId.includes('user') || 
+                        className.toLowerCase().includes('user') || 
                         el.tagName.toLowerCase() === 'user-query' ||
                         html.includes('data-message-author-role="user"') ||
                         el.querySelector('[data-message-author-role="user"]') ||
-                        el.className.toLowerCase().includes('user-message') ||
-                        el.className.toLowerCase().includes('user_message') ||
-                        el.className.toLowerCase().includes('font-user-message') ||
-                        el.className.toLowerCase().includes('query-content') ||
-                        el.className.toLowerCase().includes('user-query')) {
+                        className.toLowerCase().includes('query-content')) {
                         isUser = true;
                     }
                     
@@ -1452,14 +1435,34 @@ fun WebViewScreen(
 
     DisposableEffect(webViewResetKey) {
         onDispose {
-            webViewRef?.apply {
-                stopLoading()
-                clearHistory()
-                removeAllViews()
-                try {
-                    destroy()
-                } catch (e: Exception) {
-                    // Ignore
+            webViewRef?.let { wv ->
+                wv.post {
+                    try {
+                        val parent = wv.parent as? ViewGroup
+                        parent?.removeView(wv)
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                    try {
+                        wv.stopLoading()
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                    try {
+                        wv.clearHistory()
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                    try {
+                        wv.removeAllViews()
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                    try {
+                        wv.destroy()
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
                 }
             }
             webViewRef = null
@@ -1607,7 +1610,7 @@ fun WebViewScreen(
                                             try {
                                                 val parent = wv.parent as? ViewGroup
                                                 parent?.removeView(wv)
-                                                wv.destroy()
+                                                // Safe: handled in onDispose, removed from here to prevent crashes
                                             } catch (e: Exception) {
                                                 // Ignore
                                             }
