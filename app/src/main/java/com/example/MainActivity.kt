@@ -170,6 +170,7 @@ fun MainScreen(viewModel: ContextViewModel = viewModel()) {
                     url = currentWebviewUrl,
                     platformName = currentWebviewPlatform,
                     onBack = { currentScreen = "main" },
+                    capsules = blocks,
                     onSaveBlock = { title, content, provider, category, tags ->
                         viewModel.saveBlock(
                             title = title,
@@ -1133,12 +1134,309 @@ fun LibraryView(
 
 // ================= WEBVIEW EXPERIENCE CONTAINER =================
 
+fun generateAutoTitle(extractedText: String, platformName: String): String {
+    val lines = extractedText.split("\n")
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    
+    for (line in lines) {
+        val lower = line.lowercase()
+        // Skip common role separators
+        if (lower == "user:" || lower == "assistant:" || lower == "claude:" || lower == "chatgpt:" || lower == "gemini:") {
+            continue
+        }
+        val cleanLine = line.trim()
+        if (cleanLine.isNotBlank()) {
+            return if (cleanLine.length > 40) {
+                cleanLine.substring(0, 37) + "..."
+            } else {
+                cleanLine
+            }
+        }
+    }
+    return "$platformName Chat Session"
+}
+
+fun triggerExtractionForSave(
+    wv: WebView?,
+    platformName: String,
+    context: Context,
+    onSuccess: (ScrapingResult?) -> Unit
+) {
+    if (wv == null) {
+        Toast.makeText(context, "WebView is initializing... Please wait.", Toast.LENGTH_SHORT).show()
+        onSuccess(null)
+        return
+    }
+    
+    val js = """
+        (function() {
+            var messagesToSave = [];
+            var href = window.location.href;
+
+            function cleanElementAndGetText(el) {
+                if (!el) return "";
+                var clone = el.cloneNode(true);
+                var selectorsToRemove = [
+                    'button', 'svg', 'img', 'nav', 'aside', '.avatar', '.sr-only', 
+                    '[role="button"]', '.hidden', 'style', 'script',
+                    '.text-xs', '.copy-button', '.feedback-buttons', '.conversation-actions',
+                    '[aria-label*="copy"]', '[aria-label*="Copy"]',
+                    '[aria-label*="share"]', '[aria-label*="Share"]',
+                    '.copied', '.code-header', '.syntax-highlighter-header'
+                ];
+                selectorsToRemove.forEach(function(sel) {
+                    var unwanted = clone.querySelectorAll(sel);
+                    unwanted.forEach(function(u) {
+                        u.parentNode.removeChild(u);
+                    });
+                });
+                
+                var pres = clone.querySelectorAll('pre');
+                pres.forEach(function(pre) {
+                    var code = pre.querySelector('code');
+                    if (code) {
+                        pre.innerText = "\n```\n" + code.innerText.trim() + "\n```\n";
+                    }
+                });
+                
+                return clone.innerText.trim();
+            }
+
+            if (href.includes("chatgpt.com")) {
+                var rawTurns = Array.from(document.querySelectorAll(
+                    'article, [data-testid^="conversation-turn-"], [class*="ConversationTurn"]'
+                ));
+                
+                var turns = [];
+                rawTurns.forEach(function(el) {
+                    var isDescendant = turns.some(function(parent) {
+                        return parent.contains(el);
+                    });
+                    if (isDescendant) return;
+                    turns = turns.filter(function(child) {
+                        return !el.contains(child);
+                    });
+                    turns.push(el);
+                });
+
+                turns.forEach(function(turn) {
+                    var isUser = false;
+                    var roleEl = turn.querySelector('[data-message-author-role]');
+                    if (roleEl) {
+                        var role = roleEl.getAttribute('data-message-author-role');
+                        if (role === 'user') isUser = true;
+                    } else if (turn.querySelector('[data-testid="user-message"]') || 
+                               turn.querySelector('.user-message') || 
+                               turn.querySelector('.whitespace-pre-wrap:not(.markdown)')) {
+                        isUser = true;
+                    }
+                    
+                    var speaker = isUser ? 'USER' : 'CHATGPT';
+                    var contentEl = turn.querySelector('.markdown') || 
+                                    turn.querySelector('.whitespace-pre-wrap') || 
+                                    turn.querySelector('[data-message-author-role="user"]') ||
+                                    turn.querySelector('[data-message-author-role="assistant"]') ||
+                                    turn;
+                    
+                    var textVal = cleanElementAndGetText(contentEl);
+                    if (textVal) {
+                        var lowerVal = textVal.toLowerCase();
+                        if (lowerVal !== "user" && lowerVal !== "chatgpt" && lowerVal !== "assistant") {
+                            messagesToSave.push({ speaker: speaker, text: textVal });
+                        }
+                    }
+                });
+            } else if (href.includes("claude.ai")) {
+                var rawElements = Array.from(document.querySelectorAll(
+                    '[data-testid="user-message"], [data-testid="assistant-message"], ' +
+                    '.user-message, .claude-message, .font-claude-message, .assistant-message, ' +
+                    'div[class*="font-user-message"], div[class*="font-claude-message"]'
+                ));
+                
+                var elements = [];
+                rawElements.forEach(function(el) {
+                    if (el.querySelector('nav') || el.querySelector('sidebar') || el.closest('button')) return;
+                    var isDescendant = elements.some(function(parent) {
+                        return parent.contains(el);
+                    });
+                    if (isDescendant) return;
+                    elements = elements.filter(function(child) {
+                        return !el.contains(child);
+                    });
+                    elements.push(el);
+                });
+
+                elements.forEach(function(item) {
+                    var isUser = item.getAttribute('data-testid') === 'user-message' || 
+                                 item.classList.contains('user-message') || 
+                                 item.classList.contains('font-user-message') ||
+                                 item.className.toLowerCase().includes('user-message') ||
+                                 item.className.toLowerCase().includes('font-user-message');
+                    
+                    var speaker = isUser ? 'USER' : 'CLAUDE';
+                    var textVal = cleanElementAndGetText(item);
+                    if (textVal) {
+                        var lowerVal = textVal.toLowerCase();
+                        if (lowerVal !== "user" && lowerVal !== "claude" && lowerVal !== "assistant") {
+                            messagesToSave.push({ speaker: speaker, text: textVal });
+                        }
+                    }
+                });
+            } else if (href.includes("gemini.google.com")) {
+                var rawItems = Array.from(document.querySelectorAll(
+                    'user-query, model-response, .user-query, .model-response, ' +
+                    '[class*="user-query"], [class*="model-response"], .query-content, .message-content, .model-response-text'
+                ));
+                
+                var items = [];
+                rawItems.forEach(function(el) {
+                    if (el.querySelector('nav') || el.querySelector('sidebar') || el.closest('button')) return;
+                    var isDescendant = items.some(function(parent) {
+                        return parent.contains(el);
+                    });
+                    if (isDescendant) return;
+                    items = items.filter(function(child) {
+                        return !el.contains(child);
+                    });
+                    items.push(el);
+                });
+
+                items.forEach(function(item) {
+                    var isUser = item.tagName.toLowerCase() === 'user-query' || 
+                                 item.classList.contains('user-query') ||
+                                 item.className.toLowerCase().includes('user-query') ||
+                                 item.className.toLowerCase().includes('query-content');
+                    
+                    var speaker = isUser ? 'USER' : 'GEMINI';
+                    var contentContainer = item.querySelector('.message-content') || item.querySelector('.query-content') || item;
+                    var textVal = cleanElementAndGetText(contentContainer);
+                    if (textVal) {
+                        var lowerVal = textVal.toLowerCase();
+                        if (lowerVal !== "user" && lowerVal !== "gemini" && lowerVal !== "assistant" && lowerVal !== "model response") {
+                            messagesToSave.push({ speaker: speaker, text: textVal });
+                        }
+                    }
+                });
+            } else {
+                var ps = document.querySelectorAll('p, pre');
+                ps.forEach(function(p) {
+                    var txt = cleanElementAndGetText(p);
+                    if (txt && txt.length > 20) {
+                        messagesToSave.push({ speaker: "Text", text: txt });
+                    }
+                });
+            }
+
+            // Universal robust fallback if platform-specific scraper returned too few messages
+            if (messagesToSave.length < 2) {
+                messagesToSave = [];
+                var candidates = Array.from(document.querySelectorAll(
+                    'div[class*="message"], div[class*="bubble"], div[class*="row"], ' +
+                    'div[class*="turn"], article, [data-testid*="message"], [data-testid*="turn"]'
+                ));
+                
+                var chatElements = [];
+                candidates.forEach(function(el) {
+                    var text = el.innerText ? el.innerText.trim() : "";
+                    if (text.length < 2 || text.length > 50000) return;
+                    if (el.querySelector('nav') || el.querySelector('sidebar') || el.closest('button')) return;
+                    if (el.tagName === 'BODY' || el.tagName === 'HTML') return;
+                    
+                    var isDescendant = chatElements.some(function(parent) {
+                        return parent.contains(el);
+                    });
+                    if (isDescendant) return;
+                    
+                    chatElements = chatElements.filter(function(child) {
+                        return !el.contains(child);
+                    });
+                    chatElements.push(el);
+                });
+                
+                chatElements.forEach(function(el) {
+                    var html = el.innerHTML || "";
+                    var textVal = cleanElementAndGetText(el);
+                    if (!textVal) return;
+                    
+                    var isUser = false;
+                    if (el.getAttribute('data-testid') === 'user-message' || 
+                        el.classList.contains('user-query') || 
+                        el.tagName.toLowerCase() === 'user-query' ||
+                        html.includes('data-message-author-role="user"') ||
+                        el.querySelector('[data-message-author-role="user"]') ||
+                        el.className.toLowerCase().includes('user-message') ||
+                        el.className.toLowerCase().includes('user_message') ||
+                        el.className.toLowerCase().includes('font-user-message') ||
+                        el.className.toLowerCase().includes('query-content') ||
+                        el.className.toLowerCase().includes('user-query')) {
+                        isUser = true;
+                    }
+                    
+                    var speaker = isUser ? 'USER' : '${platformName.uppercase()}';
+                    messagesToSave.push({ speaker: speaker, text: textVal });
+                });
+            }
+
+            var finalResult = "";
+            var lastSpeaker = "";
+            var lastText = "";
+            
+            messagesToSave.forEach(function(msg) {
+                var cleanTxt = msg.text.trim();
+                if (cleanTxt === lastText && msg.speaker === lastSpeaker) {
+                    return;
+                }
+                
+                var lowerTxt = cleanTxt.toLowerCase();
+                if (lowerTxt === "user" || lowerTxt === "claude" || lowerTxt === "chatgpt" || lowerTxt === "gemini" || lowerTxt === "assistant") {
+                    return;
+                }
+                
+                finalResult += msg.speaker + ":\n" + cleanTxt + "\n\n";
+                lastSpeaker = msg.speaker;
+                lastText = cleanTxt;
+            });
+
+            return finalResult.trim();
+        })()
+    """.trimIndent()
+
+    wv.evaluateJavascript(js) { rawResult ->
+        var decodedResult = rawResult ?: ""
+        if (decodedResult.startsWith("\"") && decodedResult.endsWith("\"") && decodedResult.length > 1) {
+            decodedResult = decodedResult.substring(1, decodedResult.length - 1)
+            decodedResult = decodedResult
+                .replace("\\n", "\n")
+                .replace("\\t", "\t")
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\")
+        }
+        decodedResult = decodedResult.trim()
+        
+        if (decodedResult.isBlank() || decodedResult == "null") {
+            Toast.makeText(context, "Unable to extract conversation. Please try again.", Toast.LENGTH_LONG).show()
+            onSuccess(null)
+        } else {
+            val autoTitle = generateAutoTitle(decodedResult, platformName)
+            onSuccess(
+                ScrapingResult(
+                    title = autoTitle,
+                    content = decodedResult,
+                    platform = platformName
+                )
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WebViewScreen(
     url: String,
     platformName: String,
     onBack: () -> Unit,
+    capsules: List<ContextBlock>,
     onSaveBlock: (title: String, content: String, provider: String, category: String, tags: String) -> Unit
 ) {
     val context = LocalContext.current
@@ -1146,6 +1444,27 @@ fun WebViewScreen(
     var progress by remember { mutableIntStateOf(0) }
     var isRefreshing by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf<ScrapingResult?>(null) }
+    var showCapsulePicker by remember { mutableStateOf(false) }
+    var pickerSearchQuery by remember { mutableStateOf("") }
+    var showCapsulesMenu by remember { mutableStateOf(false) }
+    var webViewResetKey by remember { mutableIntStateOf(0) }
+    var isRenderProcessCrashed by remember { mutableStateOf(false) }
+
+    DisposableEffect(webViewResetKey) {
+        onDispose {
+            webViewRef?.apply {
+                stopLoading()
+                clearHistory()
+                removeAllViews()
+                try {
+                    destroy()
+                } catch (e: Exception) {
+                    // Ignore
+                }
+            }
+            webViewRef = null
+        }
+    }
 
     BackHandler(enabled = webViewRef?.canGoBack() == true) {
         webViewRef?.goBack()
@@ -1189,143 +1508,143 @@ fun WebViewScreen(
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = {
-                    webViewRef?.let { wv ->
-                        val js = """
-                            (function() {
-                                var text = "";
-                                var href = window.location.href;
-                                if (href.includes("chatgpt.com")) {
-                                    var parts = document.querySelectorAll('[data-message-author-role]');
-                                    parts.forEach(function(p) {
-                                        var role = p.getAttribute('data-message-author-role');
-                                        text += (role === 'user' ? 'USER' : 'ASSISTANT') + ': ' + p.innerText + '\n\n';
-                                    });
-                                } else if (href.includes("claude.ai")) {
-                                    var messages = document.querySelectorAll('.font-claude-message, .claude-message, [data-testid="user-message"]');
-                                    messages.forEach(function(m) {
-                                        var isU = m.closest('.user-message') || m.classList.contains('user-message') || m.getAttribute('data-testid') === 'user-message';
-                                        text += (isU ? 'USER' : 'ASSISTANT') + ': ' + m.innerText + '\n\n';
-                                    });
-                                } else if (href.includes("gemini.google.com")) {
-                                    var items = document.querySelectorAll('user-query, model-response');
-                                    items.forEach(function(i) {
-                                        var isU = i.tagName.toLowerCase() === 'user-query';
-                                        text += (isU ? 'USER' : 'ASSISTANT') + ': ' + i.innerText + '\n\n';
-                                    });
-                                }
-                                
-                                if (!text.trim()) {
-                                    text = window.getSelection().toString();
-                                }
-                                if (!text.trim()) {
-                                    var ps = document.querySelectorAll('p');
-                                    ps.forEach(function(p) {
-                                        if (p.innerText.trim().length > 15) {
-                                            text += p.innerText + '\n\n';
-                                        }
-                                    });
-                                }
-                                if (!text.trim()) {
-                                    text = document.body.innerText;
-                                }
-                                return text;
-                            })()
-                        """.trimIndent()
-                        
-                        wv.evaluateJavascript(js) { rawResult ->
-                            var decodedResult = rawResult ?: ""
-                            // Clean Android returned JSON-encoded string
-                            if (decodedResult.startsWith("\"") && decodedResult.endsWith("\"") && decodedResult.length > 1) {
-                                decodedResult = decodedResult.substring(1, decodedResult.length - 1)
-                                decodedResult = decodedResult
-                                    .replace("\\n", "\n")
-                                    .replace("\\t", "\t")
-                                    .replace("\\\"", "\"")
-                                    .replace("\\\\", "\\")
-                            }
-                            
-                            var autoTitle = wv.title ?: "Chat Capsule"
-                            if (autoTitle.isBlank() || autoTitle.contains("ChatGPT") || autoTitle.contains("Claude") || autoTitle.contains("Gemini")) {
-                                if (decodedResult.isNotBlank()) {
-                                    val nonBlanks = decodedResult.split("\n").filter { it.isNotBlank() }
-                                    if (nonBlanks.isNotEmpty()) {
-                                        val firstMsg = nonBlanks.first().replace("USER:", "").replace("ASSISTANT:", "").trim()
-                                        autoTitle = if (firstMsg.length > 30) firstMsg.substring(0, 27) + "..." else firstMsg
-                                    }
-                                }
-                            }
-                            
-                            showSaveDialog = ScrapingResult(
-                                title = autoTitle,
-                                content = decodedResult,
-                                platform = platformName
-                            )
-                        }
-                    }
-                },
+                onClick = { showCapsulesMenu = true },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
-                icon = { Icon(Icons.Default.Save, "Save Icon") },
-                text = { Text("Save Capsule") }
+                icon = { Icon(Icons.Default.FolderOpen, "Capsules Icon") },
+                text = { Text("Capsules") }
             )
         }
     ) { paddingValues ->
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-            AndroidView(
-                factory = { ctx ->
-                    val swipeLayout = SwipeRefreshLayout(ctx).apply {
-                        setOnRefreshListener {
-                            webViewRef?.reload()
-                        }
-                        setColorSchemeColors(0xFF6366F1.toInt())
-                    }
-                    val webView = WebView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                                super.onPageStarted(view, url, favicon)
-                                swipeLayout.isRefreshing = true
-                                isRefreshing = true
+            if (isRenderProcessCrashed) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Rendering process gone",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(64.dp)
+                            )
+                            
+                            Text(
+                                text = "Render Process Terminated",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            
+                            Text(
+                                text = "The web view collapsed because the system reclaimed memory. Don't worry, nothing is lost! Tap below to reload the container securely.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Button(
+                                onClick = {
+                                    isRenderProcessCrashed = false
+                                    webViewResetKey++
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Reload Web Sandbox")
                             }
+                        }
+                    }
+                }
+            } else {
+                key(webViewResetKey) {
+                    AndroidView(
+                        factory = { ctx ->
+                            val swipeLayout = SwipeRefreshLayout(ctx).apply {
+                                setOnRefreshListener {
+                                    webViewRef?.reload()
+                                }
+                                setColorSchemeColors(0xFF6366F1.toInt())
+                            }
+                            val webView = WebView(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                                webViewClient = object : WebViewClient() {
+                                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                                        super.onPageStarted(view, url, favicon)
+                                        swipeLayout.isRefreshing = true
+                                        isRefreshing = true
+                                    }
 
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                super.onPageFinished(view, url)
-                                swipeLayout.isRefreshing = false
-                                isRefreshing = false
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        super.onPageFinished(view, url)
+                                        swipeLayout.isRefreshing = false
+                                        isRefreshing = false
+                                    }
+
+                                    override fun onRenderProcessGone(view: WebView?, detail: android.webkit.RenderProcessGoneDetail?): Boolean {
+                                        view?.let { wv ->
+                                            try {
+                                                val parent = wv.parent as? ViewGroup
+                                                parent?.removeView(wv)
+                                                wv.destroy()
+                                            } catch (e: Exception) {
+                                                // Ignore
+                                            }
+                                        }
+                                        isRenderProcessCrashed = true
+                                        return true
+                                    }
+                                }
+                                webChromeClient = object : WebChromeClient() {
+                                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                        super.onProgressChanged(view, newProgress)
+                                        progress = newProgress
+                                    }
+                                }
+                                settings.apply {
+                                    javaScriptEnabled = true
+                                    domStorageEnabled = true
+                                    databaseEnabled = true
+                                    useWideViewPort = true
+                                    loadWithOverviewMode = true
+                                    userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                                }
+                                
+                                val cookies = CookieManager.getInstance()
+                                cookies.setAcceptCookie(true)
+                                cookies.setAcceptThirdPartyCookies(this, true)
+                                
+                                loadUrl(url)
                             }
-                        }
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                super.onProgressChanged(view, newProgress)
-                                progress = newProgress
-                            }
-                        }
-                        settings.apply {
-                            javaScriptEnabled = true
-                            domStorageEnabled = true
-                            databaseEnabled = true
-                            useWideViewPort = true
-                            loadWithOverviewMode = true
-                            userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-                        }
-                        
-                        // Setup cookies for session logins
-                        val cookies = CookieManager.getInstance()
-                        cookies.setAcceptCookie(true)
-                        cookies.setAcceptThirdPartyCookies(this, true)
-                        
-                        loadUrl(url)
-                    }
-                    webViewRef = webView
-                    swipeLayout.addView(webView)
-                    swipeLayout
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                            webViewRef = webView
+                            swipeLayout.addView(webView)
+                            swipeLayout
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
 
             if (progress < 100) {
                 LinearProgressIndicator(
@@ -1343,26 +1662,23 @@ fun WebViewScreen(
 
     // Capture editor validation dialog
     showSaveDialog?.let { result ->
-        var saveTitle by remember { mutableStateOf(result.title) }
-        var saveContent by remember { mutableStateOf(result.content) }
-        var saveCategory by remember { mutableStateOf("Conversation") }
-        var saveTags by remember { mutableStateOf("") }
+        var saveTitle by remember(result) { mutableStateOf(result.title) }
 
         AlertDialog(
             onDismissRequest = { showSaveDialog = null },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (saveTitle.isNotBlank() && saveContent.isNotBlank()) {
-                            onSaveBlock(saveTitle, saveContent, result.platform, saveCategory, saveTags)
+                        if (saveTitle.isNotBlank()) {
+                            onSaveBlock(saveTitle, result.content, result.platform, "Scraped", "")
                             showSaveDialog = null
-                            Toast.makeText(context, "Saved to ContextDrop Library!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Saved successfully!", Toast.LENGTH_SHORT).show()
                         } else {
-                            Toast.makeText(context, "Both fields are mandatory", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Title cannot be empty.", Toast.LENGTH_SHORT).show()
                         }
                     }
                 ) {
-                    Text("Save to Vault")
+                    Text("Save")
                 }
             },
             dismissButton = {
@@ -1370,48 +1686,337 @@ fun WebViewScreen(
                     Text("Cancel")
                 }
             },
-            title = { Text("Approve Conversation Capsule") },
+            title = { Text("Save Capsule") },
             text = {
                 Column(
-                    modifier = Modifier
-                        .verticalScroll(rememberScrollState())
-                        .fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Captured from $platformName. Modify title and clean content if necessary before writing to offline vault.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                    
+                    Text("Title", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
                     OutlinedTextField(
                         value = saveTitle,
                         onValueChange = { saveTitle = it },
-                        label = { Text("Title") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
-                    OutlinedTextField(
-                        value = saveCategory,
-                        onValueChange = { saveCategory = it },
-                        label = { Text("Category") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = saveTags,
-                        onValueChange = { saveTags = it },
-                        label = { Text("Tags") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = saveContent,
-                        onValueChange = { saveContent = it },
-                        label = { Text("Content") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 4,
-                        maxLines = 8
-                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text("Content", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(110.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                text = result.content,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         )
+    }
+
+    if (showCapsulesMenu) {
+        Dialog(onDismissRequest = { showCapsulesMenu = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "Capsules",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                    
+                    // 1. SAVE CAPSULE Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                showCapsulesMenu = false
+                                triggerExtractionForSave(webViewRef, platformName, context) { result ->
+                                    if (result != null) {
+                                        showSaveDialog = result
+                                    }
+                                }
+                            }
+                            .padding(vertical = 12.dp, horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Save,
+                            contentDescription = "Save Capsule",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Save Capsule",
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Extract and save current conversation",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // 2. LOAD CAPSULE Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                showCapsulesMenu = false
+                                showCapsulePicker = true
+                            }
+                            .padding(vertical = 12.dp, horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CloudUpload,
+                            contentDescription = "Load Capsule",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Load Capsule",
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Load saved templates directly into chat input",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    
+                    OutlinedButton(
+                        onClick = { showCapsulesMenu = false },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCapsulePicker) {
+        Dialog(onDismissRequest = { showCapsulePicker = false }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.85f),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Select Capsule to Load",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        IconButton(onClick = { showCapsulePicker = false }) {
+                            Icon(Icons.Default.Close, "Dismiss")
+                        }
+                    }
+                    
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    OutlinedTextField(
+                        value = pickerSearchQuery,
+                        onValueChange = { pickerSearchQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Search capsules...") },
+                        leadingIcon = { Icon(Icons.Default.Search, "Search Icon", tint = MaterialTheme.colorScheme.secondary) },
+                        trailingIcon = {
+                            if (pickerSearchQuery.isNotEmpty()) {
+                                IconButton(onClick = { pickerSearchQuery = "" }) {
+                                    Icon(Icons.Default.Close, "Clear", tint = MaterialTheme.colorScheme.secondary)
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    val filteredCapsules = remember(capsules, pickerSearchQuery) {
+                        if (pickerSearchQuery.isBlank()) {
+                            capsules
+                        } else {
+                            capsules.filter {
+                                it.title.contains(pickerSearchQuery, ignoreCase = true) ||
+                                it.content.contains(pickerSearchQuery, ignoreCase = true)
+                            }
+                        }
+                    }
+                    
+                    if (filteredCapsules.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No saved capsules found.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(filteredCapsules) { capsule ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            val escapedContent = capsule.content
+                                                .replace("\\", "\\\\")
+                                                .replace("`", "\\`")
+                                                .replace("$", "\\$")
+                                                .replace("\n", "\\n")
+                                                .replace("\r", "")
+                                                .replace("\"", "\\\"")
+                                                .replace("'", "\\'")
+                                                
+                                            val injectJs = """
+                                                (function() {
+                                                    var text = "$escapedContent";
+                                                    var selectors = [
+                                                        '#prompt-textarea',
+                                                        'div[contenteditable="true"]',
+                                                        'textarea[placeholder*="Claude"]',
+                                                        'textarea[placeholder*="ChatGPT"]',
+                                                        'textarea[placeholder*="Gemini"]',
+                                                        'textarea[placeholder*="Ask"]',
+                                                        'textarea[placeholder*="Message"]',
+                                                        'textarea',
+                                                        'div[placeholder*="Message"]'
+                                                    ];
+                                                    for (var i = 0; i < selectors.length; i++) {
+                                                        var el = document.querySelector(selectors[i]);
+                                                        if (el) {
+                                                            el.focus();
+                                                            if (el.tagName.toLowerCase() === 'div' && el.getAttribute('contenteditable') === 'true') {
+                                                                el.innerText = text;
+                                                            } else {
+                                                                el.value = text;
+                                                            }
+                                                            var event = new Event('input', { bubbles: true });
+                                                            el.dispatchEvent(event);
+                                                            var event2 = new Event('change', { bubbles: true });
+                                                            el.dispatchEvent(event2);
+                                                            return "success";
+                                                        }
+                                                    }
+                                                    return "fallback";
+                                                })()
+                                            """.trimIndent()
+                                            
+                                            webViewRef?.evaluateJavascript(injectJs) { evalResult ->
+                                                val cleanEval = evalResult ?: ""
+                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                val clip = ClipData.newPlainText("ContextDrop Loaded Capsule", capsule.content)
+                                                clipboard.setPrimaryClip(clip)
+                                                
+                                                if (cleanEval.contains("success")) {
+                                                    Toast.makeText(context, "Loaded! Capsule content inserted into chat.", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    Toast.makeText(context, "Context copied to clipboard! Long-press input to paste.", Toast.LENGTH_LONG).show()
+                                                }
+                                            }
+                                            showCapsulePicker = false
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = capsule.title,
+                                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            
+                                            val badgeColor = when (capsule.model) {
+                                                "Claude" -> Color(0xFFD97706)
+                                                "ChatGPT" -> Color(0xFF10A37F)
+                                                "Gemini" -> Color(0xFF3B82F6)
+                                                else -> Color(0xFF6B7280)
+                                            }
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = badgeColor.copy(alpha = 0.12f)
+                                            ) {
+                                                Text(
+                                                    text = capsule.model.uppercase(),
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = badgeColor)
+                                                )
+                                            }
+                                        }
+                                        
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        
+                                        Text(
+                                            text = capsule.content,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

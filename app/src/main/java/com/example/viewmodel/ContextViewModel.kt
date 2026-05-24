@@ -16,7 +16,7 @@ class ContextViewModel(application: Application) : AndroidViewModel(application)
     private val database: AppDatabase = Room.databaseBuilder(
         application,
         AppDatabase::class.java, "context_drop_database"
-    ).build()
+    ).fallbackToDestructiveMigration().build()
 
     private val repository = ContextRepository(database.contextDao())
 
@@ -159,62 +159,19 @@ class ContextViewModel(application: Application) : AndroidViewModel(application)
     private suspend fun prepopulateDefaultBlocks() {
         val defaultBlocks = listOf(
             ContextBlock(
-                title = "System: Software Architect Rules",
-                content = """You are a Senior Software Architect specializing in clean coding standards, secure patterns, and DRY systems. 
-Whenever writing code:
-- Ensure strict type safety and modular components.
-- Explain trade-offs in performance vs readability.
-- Keep comments concise and focused precisely on "Why" rather than "What".""",
-                model = "General",
-                category = "System",
-                tags = "system,architect,clean-code"
-            ),
-            ContextBlock(
-                title = "Claude: Crafting Persona",
-                content = """You are Claude, a deeply thoughtful, conversational, and precise AI engineer. 
-- Use rich markdown layouts, tables, and nested checklists to structure answers.
-- Speak in a calm, analytical, and professional tone.
-- Give highly contextual real-world examples and anticipate edge cases before writing code.""",
-                model = "Claude",
-                category = "Persona",
-                tags = "persona,thoughtful,creative"
-            ),
-            ContextBlock(
-                title = "ChatGPT: Python Fast-Track",
-                content = """Implement complete Python files utilizing typing, pydantic schemas, and robust error handlers. 
-- Avoid truncated code blocks or placeholders.
-- Always implement comprehensive unit tests (pytest) matching structural classes.
-- Recommend standard logging over simple print statements.""",
-                model = "ChatGPT",
-                category = "Code",
-                tags = "python,backend,pytest"
-            ),
-            ContextBlock(
-                title = "Gemini: Kotlin & Jetpack Compose Spec",
-                content = """Use Kotlin 2.1.0 with modern declarative Jetpack Compose UI state management.
-- Center layouts inside proper Material 3 Scaffolds.
-- Handle Edge-to-Edge window insets correctly using dynamic top/bottom paddings.
-- Expose state properly through StateFlow and ViewModel constructor injections.""",
-                model = "Gemini",
-                category = "Code",
-                tags = "kotlin,android,compose,ksp"
-            ),
-            ContextBlock(
-                title = "DB Schema: ContextDrop Offline Models",
-                content = """// Room SQLite schema for ContextDrop
-@Entity(tableName = "context_blocks")
-data class ContextBlock(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val title: String,
-    val content: String,
-    val model: String, 
-    val category: String, 
-    val tags: String, 
-    val timestamp: Long
-)""",
+                title = "Getting Started with ContextDrop",
+                content = """Welcome to ContextDrop!
+
+ContextDrop is your secure, offline vault for your AI interactions and prompt templates.
+
+How to use:
+1. Inside Claude, ChatGPT, or Gemini screens, tap the "Capsules" floating button.
+2. Select "Save Capsule" to automatically extract the conversation, preview it, and save it.
+3. Select "Load Capsule" to instantly search and insert any saved context directly into the chat input.
+4. Manage, copy, export, or delete your saved capsules anytime from the Library screen.""",
                 model = "General",
                 category = "Instruction",
-                tags = "schema,database,offline"
+                tags = "onboarding,help"
             )
         )
 
@@ -224,23 +181,6 @@ data class ContextBlock(
     }
 
     private suspend fun prepopulateDefaultChatHistories() {
-        val defaultHistories = listOf(
-            ChatHistory(
-                title = "Optimizing Room DB Insertions",
-                rawTranscript = """User: How do I handle batch inserts in Room efficiently with background threads?
-Assistant: You should do that inside a database transaction to prevent SQLite from creating and tearing down multiple file journal entities. Wrap your insertion block inside:
-db.withTransaction {
-    for (item in items) {
-        dao.insert(item)
-    }
-}""",
-                model = "Gemini",
-                tags = "room,transaction,coroutines"
-            )
-        )
-
-        for (history in defaultHistories) {
-            repository.insertHistory(history)
-        }
+        // Keep empty as all demo capsules and histories are replaced/removed
     }
 }
