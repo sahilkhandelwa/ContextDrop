@@ -1204,28 +1204,55 @@ fun triggerExtractionForSave(
             }
 
             if (href.includes("chatgpt.com")) {
-                var articles = Array.from(document.querySelectorAll('article'));
-                articles.forEach(function(art) {
+                var rawItems = Array.from(document.querySelectorAll('article'));
+                if (rawItems.length === 0) {
+                    rawItems = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"], [class*="ConversationTurn"]'));
+                }
+                if (rawItems.length === 0) {
+                    rawItems = Array.from(document.querySelectorAll('[data-testid*="message"], [data-message-author-role]'));
+                }
+                
+                // Deduplicate any nested matches
+                var items = rawItems.filter(function(el) {
+                    return !rawItems.some(function(other) {
+                        return other !== el && other.contains(el);
+                    });
+                });
+                
+                items.forEach(function(item) {
                     var isUser = false;
-                    var roleEl = art.querySelector('[data-message-author-role]');
-                    if (roleEl) {
-                        var role = roleEl.getAttribute('data-message-author-role');
+                    
+                    // Look for the role attribute: either on the element itself, or on any of its descendants
+                    var role = item.getAttribute('data-message-author-role');
+                    if (!role) {
+                        var nestedRoleEl = item.querySelector('[data-message-author-role]');
+                        if (nestedRoleEl) {
+                            role = nestedRoleEl.getAttribute('data-message-author-role');
+                        }
+                    }
+                    
+                    if (role) {
                         if (role === 'user') {
                             isUser = true;
                         }
                     } else {
-                        if (art.querySelector('[data-testid$="user-message"]') || 
-                            art.querySelector('[data-message-author-role="user"]') ||
-                            art.className.toLowerCase().includes('user') ||
-                            art.querySelector('.user-message')) {
+                        // Fallback heuristical checks:
+                        var testId = item.getAttribute('data-testid') || "";
+                        var className = item.className || "";
+                        if (testId.toLowerCase().includes('user') || 
+                            className.toLowerCase().includes('user') ||
+                            item.querySelector('[data-testid$="user-message"]') || 
+                            item.querySelector('.user-message')) {
                             isUser = true;
                         }
                     }
                     
                     var speaker = isUser ? 'USER' : 'CHATGPT';
-                    var contentEl = art.querySelector('.markdown') || 
-                                    art.querySelector('.whitespace-pre-wrap') || 
-                                    art;
+                    var contentEl = item.querySelector('.markdown') || 
+                                    item.querySelector('.whitespace-pre-wrap') || 
+                                    item.querySelector('[data-message-author-role="assistant"]') ||
+                                    item.querySelector('[data-message-author-role="user"]') ||
+                                    item;
                                     
                     var textVal = cleanElementAndGetText(contentEl);
                     if (textVal) {
@@ -1236,27 +1263,35 @@ fun triggerExtractionForSave(
                     }
                 });
             } else if (href.includes("claude.ai")) {
-                var rawElements = Array.from(document.querySelectorAll(
-                    '[data-testid="user-message"], [data-testid="assistant-message"], ' +
+                var rawItems = Array.from(document.querySelectorAll(
+                    '[data-testid="user-message"], [data-testid="assistant-message"], [data-testid="claude-message"], ' +
                     '.user-message, .claude-message, .assistant-message, ' +
-                    'div[class*="font-user-message"], div[class*="font-claude-message"]'
+                    'div[class*="font-user-message"], div[class*="font-claude-message"], ' +
+                    'div[class*="message-bubble"], div[class*="MessageBubble"]'
                 ));
                 
-                var elements = rawElements.filter(function(el) {
-                    return !rawElements.some(function(other) {
+                var items = rawItems.filter(function(el) {
+                    return !rawItems.some(function(other) {
                         return other !== el && other.contains(el);
                     });
                 });
-
-                elements.forEach(function(item) {
-                    var isUser = item.getAttribute('data-testid') === 'user-message' || 
-                                 item.classList.contains('user-message') || 
-                                 item.classList.contains('font-user-message') ||
-                                 item.className.toLowerCase().includes('user-message') ||
-                                 item.className.toLowerCase().includes('font-user-message');
+                
+                items.forEach(function(item) {
+                    var isUser = false;
+                    var testId = item.getAttribute('data-testid') || "";
+                    var className = item.className || "";
+                    var htmlContent = item.innerHTML || "";
+                    
+                    if (testId.includes('user') || 
+                        className.toLowerCase().includes('user') || 
+                        className.toLowerCase().includes('font-user-message') ||
+                        htmlContent.includes('user-message')) {
+                        isUser = true;
+                    }
                     
                     var speaker = isUser ? 'USER' : 'CLAUDE';
-                    var textVal = cleanElementAndGetText(item);
+                    var contentEl = item.querySelector('.markdown') || item;
+                    var textVal = cleanElementAndGetText(contentEl);
                     if (textVal) {
                         var lowerVal = textVal.toLowerCase();
                         if (lowerVal !== "user" && lowerVal !== "claude" && lowerVal !== "assistant") {
@@ -1265,17 +1300,14 @@ fun triggerExtractionForSave(
                     }
                 });
             } else if (href.includes("gemini.google.com")) {
-                var rawItems = Array.from(document.querySelectorAll(
-                    'user-query, model-response, .user-query, .model-response, ' +
-                    '[class*="user-query"], [class*="model-response"]'
-                ));
+                var items = Array.from(document.querySelectorAll('user-query, model-response'));
+                if (items.length === 0) {
+                    items = Array.from(document.querySelectorAll('.user-query, .model-response'));
+                }
+                if (items.length === 0) {
+                    items = Array.from(document.querySelectorAll('[class*="user-query"], [class*="model-response"]'));
+                }
                 
-                var items = rawItems.filter(function(el) {
-                    return !rawItems.some(function(other) {
-                        return other !== el && other.contains(el);
-                    });
-                });
-
                 items.forEach(function(item) {
                     var isUser = item.tagName.toLowerCase() === 'user-query' || 
                                  item.classList.contains('user-query') ||
@@ -1284,6 +1316,7 @@ fun triggerExtractionForSave(
                     var speaker = isUser ? 'USER' : 'GEMINI';
                     var contentContainer = item.querySelector('.message-content') || 
                                            item.querySelector('.query-content') || 
+                                           item.querySelector('.model-response-text') ||
                                            item;
                                            
                     var textVal = cleanElementAndGetText(contentContainer);
@@ -1308,9 +1341,10 @@ fun triggerExtractionForSave(
             if (messagesToSave.length < 2) {
                 messagesToSave = [];
                 var rawCandidates = Array.from(document.querySelectorAll(
-                    'article, [data-testid*="message"], [data-testid*="turn"], [class*="message"], [class*="bubble"], [class*="conversation-turn"]'
+                    'article, [data-testid*="message"], [data-testid*="turn"], [class*="message-content"], [class*="message_content"], [class*="message-body"], .message, .bubble, [class*="bubble"], [class*="conversation-turn"]'
                 ));
                 
+                var totalCandidates = rawCandidates.length;
                 var candidates = rawCandidates.filter(function(el) {
                     if (el.querySelector('nav') || el.closest('nav') || el.querySelector('sidebar') || el.closest('sidebar') || el.closest('button')) {
                         return false;
@@ -1319,15 +1353,16 @@ fun triggerExtractionForSave(
                     if (text.length < 2 || text.length > 50000) return false;
                     if (el.tagName === 'BODY' || el.tagName === 'HTML') return false;
                     
-                    var childCount = 0;
-                    for (var i = 0; i < rawCandidates.length; i++) {
+                    var containedCount = 0;
+                    for (var i = 0; i < totalCandidates; i++) {
                         var other = rawCandidates[i];
                         if (other !== el && el.contains(other)) {
-                            childCount++;
-                            if (childCount >= 2) {
-                                return false;
-                            }
+                            containedCount++;
                         }
+                    }
+                    
+                    if (containedCount >= 4 && containedCount > totalCandidates * 0.4) {
+                        return false;
                     }
                     return true;
                 });
@@ -1436,33 +1471,31 @@ fun WebViewScreen(
     DisposableEffect(webViewResetKey) {
         onDispose {
             webViewRef?.let { wv ->
-                wv.post {
-                    try {
-                        val parent = wv.parent as? ViewGroup
-                        parent?.removeView(wv)
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
-                    try {
-                        wv.stopLoading()
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
-                    try {
-                        wv.clearHistory()
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
-                    try {
-                        wv.removeAllViews()
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
-                    try {
-                        wv.destroy()
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
+                try {
+                    val parent = wv.parent as? ViewGroup
+                    parent?.removeView(wv)
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                try {
+                    wv.stopLoading()
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                try {
+                    wv.clearHistory()
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                try {
+                    wv.removeAllViews()
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                try {
+                    wv.destroy()
+                } catch (e: Exception) {
+                    // Ignore
                 }
             }
             webViewRef = null
