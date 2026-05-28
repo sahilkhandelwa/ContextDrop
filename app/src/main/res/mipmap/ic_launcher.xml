@@ -4,10 +4,10 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Centered dark circular icon background (radius 36) with proper transparent padding -->
+    <!-- Centered dark rounded square icon background (size 72dp, radius 16dp) -->
     <path
         android:fillColor="#09090B"
-        android:pathData="M54,54m-36,0a36,36 0,1,1 72,0a36,36 0,1,1 -72,0" />
+        android:pathData="M34,18 h40 a16,16 0,0,1 16,16 v40 a16,16 0,0,1 -16,16 h-40 a16,16 0,0,1 -16,-16 v-40 a16,16 0,0,1 16,-16 Z" />
     <!-- Centered purple four-point star (spark) -->
     <path
         android:fillColor="#7C3AED"

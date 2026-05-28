@@ -59,6 +59,23 @@ import com.example.ui.ContextDropTheme
 import com.example.viewmodel.ContextViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.os.Build
+import androidx.core.content.FileProvider
+import android.provider.Settings
+import java.io.File
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import org.json.JSONArray
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
+import com.google.firebase.analytics.FirebaseAnalytics
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,6 +100,17 @@ data class ScrapingResult(
 fun MainScreen(viewModel: ContextViewModel = viewModel()) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val firebaseAnalytics = remember {
+        try {
+            if (com.google.firebase.FirebaseApp.getApps(context).isEmpty()) {
+                com.google.firebase.FirebaseApp.initializeApp(context)
+            }
+            FirebaseAnalytics.getInstance(context)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
     
     // Database states
     val blocks by viewModel.contextBlocks.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -90,6 +118,13 @@ fun MainScreen(viewModel: ContextViewModel = viewModel()) {
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedProvider by viewModel.selectedProviderFilter.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategoryFilter.collectAsStateWithLifecycle()
+
+    // Updater state variables
+    val downloadManager = remember { context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager }
+    var updateInfoState by remember { mutableStateOf<UpdateInfo?>(null) }
+    var downloadedApkUri by remember { mutableStateOf<Uri?>(null) }
+    var showUpdateSheet by remember { mutableStateOf(false) }
+    var activeDownloadId by remember { mutableStateOf<Long?>(null) }
 
     // Navigation state: "splash" -> "loading" -> "main" or "webview"
     var currentScreen by remember { mutableStateOf("splash") }
@@ -151,10 +186,93 @@ fun MainScreen(viewModel: ContextViewModel = viewModel()) {
 
     // Setup 1-second elegant startup flow
     LaunchedEffect(Unit) {
+        try {
+            firebaseAnalytics?.logEvent("app_opened", Bundle())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         delay(1000)
         currentScreen = "loading"
         delay(800)
         currentScreen = "main"
+
+        // Silent update check
+        scope.launch {
+            try {
+                val info = fetchUpdateInfo()
+                if (info != null && info.versionCode > com.example.BuildConfig.VERSION_CODE) {
+                    updateInfoState = info
+                    val apkName = "update_${info.versionCode}.apk"
+                    val destinationFile = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), apkName)
+                    
+                    if (destinationFile.exists() && destinationFile.length() > 0) {
+                        try {
+                            val providerAuthority = "${context.packageName}.provider"
+                            downloadedApkUri = FileProvider.getUriForFile(context, providerAuthority, destinationFile)
+                            showUpdateSheet = true
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } else {
+                        try {
+                            destinationFile.delete()
+                        } catch (e: Exception) {}
+                        
+                        val request = DownloadManager.Request(Uri.parse(info.apkUrl)).apply {
+                            setTitle("ContextDrop Update")
+                            setDescription("Downloading update to version ${info.versionName}...")
+                            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+                            setDestinationInExternalFilesDir(context, android.os.Environment.DIRECTORY_DOWNLOADS, apkName)
+                        }
+                        activeDownloadId = downloadManager.enqueue(request)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    DisposableEffect(activeDownloadId) {
+        if (activeDownloadId == null) return@DisposableEffect onDispose {}
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context, intent: Intent) {
+                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (id == activeDownloadId) {
+                    val info = updateInfoState ?: return
+                    val apkName = "update_${info.versionCode}.apk"
+                    val destinationFile = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), apkName)
+                    
+                    if (destinationFile.exists() && destinationFile.length() > 0) {
+                        try {
+                            val providerAuthority = "${context.packageName}.provider"
+                            downloadedApkUri = FileProvider.getUriForFile(context, providerAuthority, destinationFile)
+                            showUpdateSheet = true
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } else {
+                        Toast.makeText(context, "Update download failed.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, android.content.Context.RECEIVER_EXPORTED)
+        } else {
+            context.registerReceiver(receiver, filter)
+        }
+
+        onDispose {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     Crossfade(targetState = currentScreen, label = "AppScreenTransition") { screen ->
@@ -179,6 +297,16 @@ fun MainScreen(viewModel: ContextViewModel = viewModel()) {
                             category = category,
                             tags = tags
                         )
+                        try {
+                            val bundle = Bundle().apply {
+                                putString("title", title)
+                                putString("provider", provider)
+                                putString("category", category)
+                            }
+                            firebaseAnalytics?.logEvent("context_saved", bundle)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
                     }
                 )
             }
@@ -246,6 +374,15 @@ fun MainScreen(viewModel: ContextViewModel = viewModel()) {
                                         currentWebviewUrl = url
                                         currentWebviewPlatform = platform
                                         currentScreen = "webview"
+                                        try {
+                                            val bundle = Bundle().apply {
+                                                putString("platform", platform)
+                                                putString("url", url)
+                                            }
+                                            firebaseAnalytics?.logEvent("chat_opened", bundle)
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
                                     },
                                     onOpenSettings = { selectedTabState = 2 },
                                     onCreateTrigger = { showCreateCapsuleDialog = true }
@@ -351,6 +488,22 @@ fun MainScreen(viewModel: ContextViewModel = viewModel()) {
         )
     }
 
+    if (showUpdateSheet && updateInfoState != null && downloadedApkUri != null) {
+        val info = updateInfoState!!
+        val apkUri = downloadedApkUri!!
+        UpdateBottomSheetDialog(
+            versionName = info.versionName,
+            changelog = info.changelog,
+            onInstall = {
+                showUpdateSheet = false
+                installUpdateApk(context, apkUri)
+            },
+            onCancel = {
+                showUpdateSheet = false
+            }
+        )
+    }
+
     // Custom Capsule Creator Dialog (Triggered from Home / Library when empty)
     if (showCreateCapsuleDialog) {
         var createTitle by remember { mutableStateOf("") }
@@ -374,6 +527,16 @@ fun MainScreen(viewModel: ContextViewModel = viewModel()) {
                                 category = createCategory,
                                 tags = createTags
                             )
+                            try {
+                                val bundle = Bundle().apply {
+                                    putString("title", createTitle)
+                                    putString("provider", createProvider)
+                                    putString("category", createCategory)
+                                }
+                                firebaseAnalytics?.logEvent("context_saved", bundle)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                             showCreateCapsuleDialog = false
                             Toast.makeText(context, "Capsule created", Toast.LENGTH_SHORT).show()
                         } else {
@@ -2357,126 +2520,148 @@ fun BottomSheetActionItem(
 @Composable
 fun SettingsScreenView(onClearAllData: () -> Unit) {
     val context = LocalContext.current
-    var isCheckingUpdates by remember { mutableStateOf(false) }
     var privacyPolicyShow by remember { mutableStateOf(false) }
     var clearCacheConfirm by remember { mutableStateOf(false) }
+    var aboutAppShow by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFFAFAFA))
+            .background(Color(0xFFF9FAFB)) // Clean slate light gray background
             .padding(horizontal = 24.dp)
+            .verticalScroll(rememberScrollState())
     ) {
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(32.dp))
+        
+        // Brand Title Segment
         Text(
-            text = "ContextDrop Vault Control",
-            style = MaterialTheme.typography.headlineSmall.copy(
+            text = "ContextDrop",
+            style = MaterialTheme.typography.headlineLarge.copy(
                 fontWeight = FontWeight.Black,
-                letterSpacing = (-0.5).sp
+                letterSpacing = (-1).sp
             ),
             color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = "Settings",
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontWeight = FontWeight.Medium
+            ),
+            color = Color(0xFF71717A) // Zinc 500
         )
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Large Premium Dashboard Settings Grid
+        // Categories Column
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // Check updates capsule
-            SettingsCategoryCard(title = "App Information") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("App Version", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
-                        Text("Stable Production Build", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                    }
-                    Text("1.5.0", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            isCheckingUpdates = true
-                        }
-                        .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Check for Updates", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
-                        Text("Verify newest features & compatibility", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                    }
-                    if (isCheckingUpdates) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        LaunchedEffect(Unit) {
-                            delay(1500)
-                            isCheckingUpdates = false
-                            Toast.makeText(context, "ContextDrop is up to date (v1.5.0)!", Toast.LENGTH_SHORT).show()
-                        }
-                    } else {
-                        Icon(Icons.Default.ArrowForwardIos, "Arrow", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
-                    }
-                }
+            // Category: Privacy & Security
+            SettingsCategory(title = "Privacy & Security") {
+                SettingsItem(
+                    icon = Icons.Default.Lock,
+                    iconColor = Color(0xFF6366F1),
+                    iconBgColor = Color(0xFFEEF2FF),
+                    title = "Privacy and Security",
+                    subtitle = "All lock",
+                    onClick = { privacyPolicyShow = true }
+                )
+                
+                HorizontalDivider(color = Color(0xFFF4F4F5), thickness = 1.dp)
+                
+                SettingsItem(
+                    icon = Icons.Default.Delete,
+                    iconColor = Color(0xFFEF4444),
+                    iconBgColor = Color(0xFFFEF2F2),
+                    title = "Wipe Vault Data",
+                    titleColor = Color(0xFFEF4444),
+                    subtitle = "Permanently delete all vault data",
+                    onClick = { clearCacheConfirm = true }
+                )
             }
 
-            // Trust & safety card
-            SettingsCategoryCard(title = "Privacy & Sandbox") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { privacyPolicyShow = true }
-                        .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Privacy Policy", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
-                        Text("Zero external storage tracker disclosure", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                    }
-                    Icon(Icons.Default.ArrowForwardIos, "Arrow", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { clearCacheConfirm = true }
-                        .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Wipe Sandbox Data", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.error)
-                        Text("Clear browser cache cookies and SQLite databases", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                    }
-                    Icon(Icons.Default.Refresh, "Clear", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
-                }
+            // Category: About ContextDrop
+            SettingsCategory(title = "About ContextDrop") {
+                SettingsItem(
+                    icon = Icons.Default.Info,
+                    iconColor = Color(0xFF6366F1),
+                    iconBgColor = Color(0xFFEEF2FF),
+                    title = "About ContextDrop",
+                    subtitle = "We store conversational blocks securely offline with physical-level device protection.",
+                    onClick = { aboutAppShow = true }
+                )
             }
 
-            // About Brand
-            SettingsCategoryCard(title = "About ContextDrop") {
-                Text(
-                    text = "ContextDrop is a high-speed sandbox app tailored for prompt writers and software engineers using more than one conversational language model (such as Claude, ChatGPT, Gemini, etc.). We store conversational blocks securely offline with physical-level device protection.",
-                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
-                    color = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.padding(vertical = 8.dp)
+            // Category: Coming Soon
+            SettingsCategory(title = "Coming Soon") {
+                SettingsItem(
+                    icon = Icons.Default.Apps,
+                    iconColor = Color(0xFF6366F1),
+                    iconBgColor = Color(0xFFEEF2FF),
+                    title = "More AI Platforms",
+                    subtitle = "Grok, Perplexity, Mistral and more — expanding support as fast as we can.",
+                    onClick = { 
+                        Toast.makeText(context, "More AI platforms are coming in our next update!", Toast.LENGTH_SHORT).show()
+                    }
+                )
+                
+                HorizontalDivider(color = Color(0xFFF4F4F5), thickness = 1.dp)
+
+                SettingsItem(
+                    icon = Icons.Default.AutoAwesome,
+                    iconColor = Color(0xFF6366F1),
+                    iconBgColor = Color(0xFFEEF2FF),
+                    title = "Smart Conversation Summary",
+                    subtitle = "Summarise your entire conversation into a capsule without losing any important context.",
+                    onClick = { 
+                        Toast.makeText(context, "Summaries are currently in laboratory training!", Toast.LENGTH_SHORT).show()
+                    }
+                )
+
+                HorizontalDivider(color = Color(0xFFF4F4F5), thickness = 1.dp)
+
+                SettingsItem(
+                    icon = Icons.Default.Description,
+                    iconColor = Color(0xFF6366F1),
+                    iconBgColor = Color(0xFFEEF2FF),
+                    title = "Export to Multiple Formats",
+                    subtitle = "Save your capsules as PDF, Markdown, or Notion-ready files.",
+                    onClick = { 
+                        Toast.makeText(context, "Export formats are in active development!", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+
+            // Category: On The Roadmap
+            SettingsCategory(title = "On The Roadmap") {
+                SettingsItem(
+                    icon = Icons.Default.Devices,
+                    iconColor = Color(0xFF3B82F6),
+                    iconBgColor = Color(0xFFEFF6FF),
+                    title = "Cross-Device Sync",
+                    subtitle = "Access your capsules from any device — phone, tablet, or laptop — seamlessly.",
+                    onClick = { 
+                        Toast.makeText(context, "Cross-device cloud sync is targeted for Q3 2026 roadmap!", Toast.LENGTH_SHORT).show()
+                    }
+                )
+
+                HorizontalDivider(color = Color(0xFFF4F4F5), thickness = 1.dp)
+
+                SettingsItem(
+                    icon = Icons.Default.People,
+                    iconColor = Color(0xFF3B82F6),
+                    iconBgColor = Color(0xFFEFF6FF),
+                    title = "Team Sharing",
+                    subtitle = "Share capsules with teammates so everyone stays on the same page — no re-explaining to the whole team.",
+                    onClick = { 
+                        Toast.makeText(context, "Team spaces & workspaces are planned for Q4 2026 roadmap!", Toast.LENGTH_SHORT).show()
+                    }
                 )
             }
         }
+        
+        // Gentle bottom padding spacer to clear bottom navigation bar overlays smoothly
+        Spacer(modifier = Modifier.height(120.dp))
     }
 
     // Privacy disclosures dialog
@@ -2492,6 +2677,26 @@ fun SettingsScreenView(onClearAllData: () -> Unit) {
             text = {
                 Text(
                     text = "ContextDrop takes privacy seriously. Your conversation capsules and scraped model text reside strictly on your local physical device Storage inside a secure Android SQLite Database. The system contains zero telemetry trackers, cloud analytical cookies, or third party advertisement scripts. Your persistent web service configurations are untracked and locked down inside the sandboxed Android WebKit container.",
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        )
+    }
+
+    // About App details dialog
+    if (aboutAppShow) {
+        AlertDialog(
+            onDismissRequest = { aboutAppShow = false },
+            confirmButton = {
+                Button(onClick = { aboutAppShow = false }) {
+                    Text("Close")
+                }
+            },
+            title = { Text("About ContextDrop") },
+            text = {
+                Text(
+                    text = "ContextDrop is a high-speed sandbox app tailored for prompt writers and software engineers using more than one conversational language model (such as Claude, ChatGPT, Gemini, etc.). We store conversational blocks securely offline with physical-level device protection.",
                     style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2519,34 +2724,113 @@ fun SettingsScreenView(onClearAllData: () -> Unit) {
                     Text("Cancel")
                 }
             },
-            title = { Text("Confirm wiping databases?") },
+            title = { Text("Confirm Wiping Databases?") },
             text = { Text("This will permanently clear all of your saved conversation capsules and invalidate your active browser logins (ChatGPT, Claude, Gemini sessions). This action is irreversible.") }
         )
     }
 }
 
 @Composable
-fun SettingsCategoryCard(
+fun SettingsCategory(
     title: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Card(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            ),
+            color = Color(0xFF71717A), // Zinc 500
+            modifier = Modifier.padding(start = 2.dp)
+        )
+        
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFE4E4E7)) // zinc-200 border
         ) {
-            Text(
-                text = title.uppercase(),
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
-                color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            content()
+            Column(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                content()
+            }
         }
+    }
+}
+
+@Composable
+fun SettingsItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconColor: Color,
+    iconBgColor: Color,
+    title: String,
+    subtitle: String,
+    titleColor: Color = Color(0xFF09090B), // Zinc 950
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Icon Badge
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(iconBgColor),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = iconColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // Text Info
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = (-0.2).sp
+                    ),
+                    color = titleColor
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF71717A) // Zinc 500
+                )
+            }
+        }
+
+        // Chevron Right Icon
+        Icon(
+            imageVector = Icons.Default.KeyboardArrowRight,
+            contentDescription = "Go",
+            tint = Color(0xFFA1A1AA), // Zinc 400
+            modifier = Modifier.size(24.dp)
+        )
     }
 }
 
@@ -2678,5 +2962,221 @@ fun formatRelativeTime(timestamp: Long): String {
         hours == 1L -> "1 hour ago"
         minutes > 1 -> "$minutes minutes ago"
         else -> "Just now"
+    }
+}
+
+// ================= IN-APP UPDATER HELPERS & COMPONENTS =================
+
+data class UpdateInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val apkUrl: String,
+    val changelog: List<String>
+)
+
+suspend fun fetchUpdateInfo(): UpdateInfo? = withContext(Dispatchers.IO) {
+    try {
+        val client = OkHttpClient()
+        val request = Request.Builder()
+            .url("https://contextdrop.netlify.app/version.json")
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@withContext null
+            val bodyString = response.body?.string() ?: return@withContext null
+            val json = JSONObject(bodyString)
+            val versionCode = json.getInt("versionCode")
+            val versionName = json.getString("versionName")
+            val apkUrl = json.getString("apkUrl")
+            val changelogArray = json.getJSONArray("changelog")
+            val changelogList = mutableListOf<String>()
+            for (i in 0 until changelogArray.length()) {
+                changelogList.add(changelogArray.getString(i))
+            }
+            UpdateInfo(versionCode, versionName, apkUrl, changelogList)
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+fun installUpdateApk(context: android.content.Context, apkUri: android.net.Uri) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (!context.packageManager.canRequestPackageInstalls()) {
+            Toast.makeText(context, "Please enable unknown source permissions for ContextDrop.", Toast.LENGTH_LONG).show()
+            try {
+                val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(settingsIntent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            return
+        }
+    }
+    
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(apkUri, "application/vnd.android.package-archive")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "Installation failed: ${e.message}", Toast.LENGTH_LONG).show()
+    }
+}
+
+@Composable
+fun UpdateBottomSheetDialog(
+    versionName: String,
+    changelog: List<String>,
+    onInstall: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Dialog(onDismissRequest = onCancel) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .testTag("new_update_bottom_sheet"),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 12.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Title
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdateAlt,
+                        contentDescription = "System Update",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Text(
+                        text = "New Update Available",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                }
+
+                // Subtitle with version info
+                Text(
+                    text = "Version $versionName is ready to install.",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+
+                // Changelog Title
+                Text(
+                    text = "What's New:",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                )
+
+                // Scrollable changelog list
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 200.dp)
+                        .verticalScroll(rememberScrollState())
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                        .padding(12.dp)
+                ) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (changelog.isEmpty()) {
+                            Text(
+                                text = "• General improvements and bug fixes.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            changelog.forEach { change ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "•",
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    )
+                                    Text(
+                                        text = change,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("cancel_update_button")
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = "Cancel",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                    }
+
+                    Button(
+                        onClick = onInstall,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("install_update_button")
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        Text(
+                            text = "Install Update",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
